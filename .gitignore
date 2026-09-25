@@ -1,0 +1,14 @@
+node_modules/
+dist/
+coverage/
+
+# Secrets (ADR 0006)
+.env
+.env.*
+!.env.example
+
+# SQLite database: holds signed transactions (ADR 0003)
+*.db
+*.db-journal
+*.db-wal
+*.db-shm
