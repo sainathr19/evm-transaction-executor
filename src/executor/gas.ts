@@ -1,6 +1,6 @@
 import type { Address, Hex, PublicClient } from 'viem'
-import type { GasConfig } from './config/types'
-import type { Fees } from './types'
+import type { GasConfig } from '../config/types'
+import type { Fees } from '../types'
 
 /** What the node says fees are right now, before our multiplier and cap. */
 export type MarketFees = { type: 'eip1559'; baseFee: bigint; tip: bigint } | { type: 'legacy'; gasPrice: bigint }

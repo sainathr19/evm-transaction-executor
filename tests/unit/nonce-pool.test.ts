@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'vitest'
-import { NoncePool } from '../../src/nonce/pool'
+import { NoncePool } from '../../src/executor/nonce-pool'
 
 function fakeClock() {
   let now = 0

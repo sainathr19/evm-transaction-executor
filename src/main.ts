@@ -1,8 +1,8 @@
 import { buildApp } from './app'
 import { ConfigError } from './config/error'
 import { loadConfig, type AppConfig } from './config/load'
+import { verifyChainId } from './executor/rpc'
 import { createLogger } from './logger'
-import { verifyChainId } from './rpc'
 
 const config = loadConfigOrExit()
 const logger = createLogger(config.logLevel)

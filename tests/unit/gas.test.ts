@@ -1,7 +1,7 @@
 import { parseGwei } from 'viem'
 import { describe, expect, test } from 'vitest'
 import type { GasConfig } from '../../src/config/types'
-import { applyGasBuffer, bumpFees, priceFees } from '../../src/gas'
+import { applyGasBuffer, bumpFees, priceFees } from '../../src/executor/gas'
 
 const GAS: GasConfig = {
   type: 'eip1559',

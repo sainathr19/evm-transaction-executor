@@ -1,5 +1,5 @@
 import type { Address } from 'viem'
-import type { NoncePool } from './nonce/pool'
+import type { NoncePool } from './nonce-pool'
 
 /** Everything the service tracks for one (chain, sender). */
 export class SenderState {
