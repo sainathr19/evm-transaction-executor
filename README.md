@@ -356,17 +356,36 @@ The startup log lists each chain's settings in effect, without its RPC URLs.
 
 ## What I'd improve with more time
 
-1. **Throughput per sender.** The spec's target is hundreds of transactions a second, with more than one per block on every network. On anvil the service does about 125 transfers/s with 5 senders. A sender's slot is only freed when the monitor sees the receipt on its 500 ms poll, so the cap and the poll interval set the pace. Next steps:
-   - watch new blocks (a WebSocket subscription, or `eth_getBlockReceipts` per block), so slots free on the next block instead of the next poll;
-   - make the in-flight cap configurable per chain;
-   - spread load across more senders.
-2. **More than one instance.** Split senders across instances, each owning its own keys, or move nonce ownership into Postgres with a lease per sender ([0001]).
+1. **Throughput on one instance.** The spec's target is hundreds of transactions a second, with more than one per block on every network. The service falls short of that once RPC calls take real time.
+   - **Where it stops.** The monitor checks each in-flight transaction with its own RPC calls, one after another, and a sender's slot is only freed when the monitor sees the receipt. So each chain tops out near 1 ÷ RPC latency, however many senders there are. Measured with a variant of the stress script that runs anvil with 2 s blocks and delays every RPC call:
+
+     | RPC delay | Senders | Transfers/s | Accepted → final, p50 |
+     |---|---|---|---|
+     | 0 ms | 5 | 39 | 5.6 s |
+     | 50 ms | 5 | 16 | 12.6 s |
+     | 100 ms | 5 | 9 | 22.9 s |
+     | 50 ms | 20 | 17 | 23.5 s |
+
+     The 125 transfers/s under [Localnet testing and results](#localnet-testing-and-results) is anvil mining each transaction on arrival and answering in under a millisecond.
+   - **Watch blocks, not transactions.** Fetch each new block's transactions once and match them to in-flight requests by sender and nonce. That's one call per block per chain, however many transactions are in flight. A different hash at our sender and nonce is also proof that the nonce was taken, which is safer than the current rule of two polls ([0009]).
+   - **Fewer RPC calls per request.** Read fees once per chain per block and share them across requests, and batch JSON-RPC calls.
+   - **The in-flight cap per chain.** L2 sequencers often accept more than geth's 16 pending transactions per account ([0012]).
+   - **Group SQLite commits.** Each request is committed about five times today, and better-sqlite3 blocks the event loop on every fsync. Buffering writes for a few milliseconds and committing once keeps the save-before-broadcast rule, as long as a broadcast waits for the commit that holds its attempt ([0003]). On a laptop this cut store time from 0.35 to 0.09 ms per transaction.
+2. **Thousands of transactions a second.** Ethereum mainnet only fits a few hundred simple transfers a second in total (block gas limit ÷ 12 s ÷ 21,000 gas), so thousands come from many chains, and from more than one process.
+   - **Split senders across instances.** Each instance owns a separate set of (chain, sender) pairs through a lease with a fencing token, so two instances never hand out nonces for the same sender ([0001]). A stateless API routes each request to the instance that owns its sender. The nonce pool, saving before broadcast and idempotency are all per sender, so they don't change.
+   - **Let the service choose the sender.** When a request names a pool of senders, or none, use the least-loaded one with funds. Each sender is a lane with a fixed rate, so this is the biggest single lever. A pool needs about target tx/s × (block time + detection time) ÷ in-flight cap senders: about 47 for 300 tx/s on Base with a cap of 16.
+   - **Sender balances.** Monitor them and top them up from a treasury, since a sender that runs dry fails every request.
+   - **Push results instead of polling** ([0002]). A client polling every 250 ms makes about 20 reads per transaction. A server-sent-events stream or a long-poll `GET` removes most of them, and batch endpoints cut the HTTP overhead of submitting and reading.
+   - **Backpressure.** A per-sender queue limit that returns `429` ([0012]).
+   - **Retention.** Archive final requests. At 1,000 tx/s that's about 86 million rows a day.
+   - **Signing off the main thread** if CPU becomes the limit: one signature takes about 0.18 ms here. KMS signing, if keys move there, has rate quotas to plan around ([0006]).
+   - **RPC capacity.** Dedicated nodes or enterprise RPC plans, and broadcasting straight to a chain's sequencer where it has a public endpoint.
 3. **Reorg safety.** A confirmation depth per chain, with a reorged transaction going back to `submitted` ([0004]).
 4. **Fewer failed requests.** Retry `nonce too high` inside the service instead of failing the request, and look up the receipt after a rejection, so load-balanced RPCs are safe too ([0008], [0009]).
 5. **A gap filler,** for a sender whose requests stop right after a rejection ([0009]).
 6. **Observability.** Metrics for queue depth, in-flight and stuck transactions, fee bumps and latency, and a `/health` that checks each chain's RPC.
 7. **Security.** API authentication and rate limits, KMS or HSM signing, and spending limits per key ([0006]).
-8. **API.** Webhooks or long-polling for results ([0002]), an expiry for idempotency keys ([0010]), and contract deployment and client-set gas. Batching through EIP-7702 is the path if batching is ever needed ([0011]).
+8. **API.** An expiry for idempotency keys ([0010]), contract deployment, and a client-set gas limit, which also saves an estimate per request. Batching through EIP-7702 is the path if batching is ever needed ([0011]).
 
 ## Observability, security and testing
 
