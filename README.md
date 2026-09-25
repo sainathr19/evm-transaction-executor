@@ -214,11 +214,19 @@ Returns the current state of a request in `result` with `200`, or `404` with `er
   ],
   "receipt": {
     "transactionHash": "0x…",
+    "transactionIndex": 0,
     "blockNumber": "…",
     "blockHash": "0x…",
+    "from": "0x…",
+    "to": "0x…",
+    "contractAddress": null,
     "gasUsed": "21000",
+    "cumulativeGasUsed": "21000",
     "effectiveGasPrice": "…",
-    "status": "success"
+    "status": "success",
+    "type": "eip1559",
+    "logsBloom": "0x…",
+    "logs": [{ "address": "0x…", "topics": ["0x…"], "data": "0x…", "logIndex": 0 }]
   },
   "failure": null,
   "createdAt": "…",
@@ -228,6 +236,7 @@ Returns the current state of a request in `result` with `200`, or `404` with `er
 
 - **Every field is always present.** Anything the request doesn't have yet is `null`: `nonce`, `gasLimit` and `hash` until it's signed, `receipt` until it's mined.
 - **`hash`** is the attempt that was mined. While the request is still `submitted`, it's the latest attempt.
+- **`receipt`** is the node's full receipt, including the emitted `logs` and the `from`, `to` and `transactionIndex`. Addresses are checksummed, and amounts are decimal strings.
 - **`failure`** is set when `status` is `failed`: its `code` (see below), a one-line `message`, and the details for that code, such as `capWei` for `FEE_ABOVE_CAP`.
 - **Signed transactions are never returned.** One whose nonce is still free could be broadcast by anyone who has it ([ADR 0003][0003]).
 

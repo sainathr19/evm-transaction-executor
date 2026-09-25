@@ -40,13 +40,26 @@ export function err<E>(error: E): Result<never, E> {
 export type Fees =
   { type: 'eip1559'; maxFeePerGas: bigint; maxPriorityFeePerGas: bigint } | { type: 'legacy'; gasPrice: bigint }
 
+/** An event the transaction emitted. */
+export type ReceiptLog = { address: Address; topics: Hex[]; data: Hex; logIndex: number }
+
+/** The node's receipt for a mined transaction. */
 export type Receipt = {
   transactionHash: Hash
+  transactionIndex: number
   blockNumber: bigint
   blockHash: Hash
+  from: Address
+  to: Address | null
+  /** Only set when a contract is deployed, which the API doesn't support. */
+  contractAddress: Address | null
   gasUsed: bigint
+  cumulativeGasUsed: bigint
   effectiveGasPrice: bigint
   status: 'success' | 'reverted'
+  type: string
+  logsBloom: Hex
+  logs: ReceiptLog[]
 }
 
 /** Why a request ended as `failed`. Each code carries the details that explain it. */
