@@ -37,7 +37,7 @@ await service.start()
 const { check, summary } = createChecker()
 
 const transfer = (overrides: Record<string, unknown> = {}) => ({
-  chainId: 31337,
+  network: 31337,
   sender: S0,
   to: TO,
   value: '1000000000000000',
@@ -105,7 +105,7 @@ await scenario('validation', async () => {
     ['missing Idempotency-Key', await post(transfer(), null), 'IDEMPOTENCY_KEY_MISSING'],
     ['bad address', await post(transfer({ to: '0x1234' })), 'VALIDATION_ERROR'],
     ['value above uint256', await post(transfer({ value: (2n ** 256n).toString() })), 'VALIDATION_ERROR'],
-    ['unsupported chain', await post(transfer({ chainId: 1 })), 'UNSUPPORTED_CHAIN'],
+    ['unsupported network', await post(transfer({ network: 1 })), 'UNSUPPORTED_NETWORK'],
     ['sender with no key', await post(transfer({ sender: TO })), 'UNKNOWN_SENDER'],
   ] as const
   for (const [name, reply, code] of cases) {

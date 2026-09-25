@@ -51,7 +51,7 @@ test('submits a transaction and reports its receipt', async () => {
   const submitted = await fetch(`${baseUrl}/transactions`, {
     method: 'POST',
     headers: { 'content-type': 'application/json', 'idempotency-key': 'e2e-1' },
-    body: JSON.stringify({ chainId: 31337, sender: ADDRESS_0, to: ADDRESS_1, value: '1000000000000000' }),
+    body: JSON.stringify({ network: 31337, sender: ADDRESS_0, to: ADDRESS_1, value: '1000000000000000' }),
   })
   expect(submitted.status).toBe(202)
   const { result } = (await submitted.json()) as { result: { id: string } }

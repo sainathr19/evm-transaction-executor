@@ -36,7 +36,7 @@ export type ApiErrorCode =
   | 'VALIDATION_ERROR'
   | 'IDEMPOTENCY_KEY_MISSING'
   | 'IDEMPOTENCY_KEY_REUSED'
-  | 'UNSUPPORTED_CHAIN'
+  | 'UNSUPPORTED_NETWORK'
   | 'UNKNOWN_SENDER'
   | 'NOT_FOUND'
   | 'PAYLOAD_TOO_LARGE'
@@ -64,7 +64,8 @@ export const ApiResponse = {
 export type ApiTransaction = {
   id: TxId
   status: TxStatus
-  chainId: ChainId
+  /** The chain id, named as the spec names the request field. */
+  network: ChainId
   sender: Address
   to: Address
   value: string
@@ -97,7 +98,8 @@ const UINT256_LIMIT = 2n ** 256n
 const address = z.string().refine((value) => isAddress(value, { strict: false }), 'must be a 20-byte hex address')
 
 const TransactionRequest = z.strictObject({
-  chainId: z.number().int().positive(),
+  /** The chain id (ADR 0005). */
+  network: z.number().int().positive(),
   sender: address,
   to: address,
   value: z
@@ -135,10 +137,10 @@ export function buildApp(deps: AppDeps): Express {
       return
     }
 
-    const chain = chainId(parsed.data.chainId)
+    const chain = chainId(parsed.data.network)
     if (!deps.chainIds.has(chain)) {
       const details = { supported: [...deps.chainIds] }
-      res.status(400).json(ApiResponse.error('UNSUPPORTED_CHAIN', `chain ${chain} is not configured`, details))
+      res.status(400).json(ApiResponse.error('UNSUPPORTED_NETWORK', `network ${chain} is not configured`, details))
       return
     }
     const sender = getAddress(parsed.data.sender)
@@ -225,7 +227,7 @@ function toApiTransaction(tx: Transaction, attempts: Attempt[]): ApiTransaction 
   return {
     id: tx.id,
     status: tx.status,
-    chainId: tx.chainId,
+    network: tx.chainId,
     sender: tx.sender,
     to: tx.to,
     value: tx.value.toString(),
