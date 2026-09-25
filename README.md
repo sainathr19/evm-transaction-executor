@@ -10,7 +10,29 @@ A client posts `{ chainId, sender, to, value, data }` and gets an id back immedi
 
 The client polls with the id to get the result.
 
-> **Status:** the design below is agreed; implementation hasn't started. Setup and run instructions will be added with the code. Some details will be settled during implementation; see [Open items](#open-items).
+> **Status:** the design below is agreed, and implementation has started. So far the project is scaffolded: tooling, per-chain config, logging and test harness. The API, worker and monitor aren't built yet. Some details will be settled during implementation; see [Open items](#open-items).
+
+## Development
+
+Requires Node.js 24+ and [Foundry](https://book.getfoundry.sh/)'s `anvil`, which the integration tests start themselves.
+
+```bash
+npm install
+```
+
+```bash
+npm test
+```
+
+```bash
+npm run typecheck
+```
+
+To run the service, copy `.env.example` to `.env`, fill it in, then run:
+
+```bash
+npm run dev
+```
 
 ## Stack
 

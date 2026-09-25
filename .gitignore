@@ -12,3 +12,6 @@ coverage/
 *.db-journal
 *.db-wal
 *.db-shm
+
+# Local database directory (DB_PATH)
+data/
