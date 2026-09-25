@@ -19,7 +19,7 @@ A client that retries a POST, for example after a network timeout, must not caus
 
 | Request | Response |
 |---|---|
-| New key | Insert the row, return `202 { id, status: "queued" }` |
+| New key | Insert the row, return `202` with the queued transaction |
 | Same key, same body | `200` with the existing transaction in its current status, and an `Idempotent-Replayed: true` header |
 | Same key, different body | `422 IDEMPOTENCY_KEY_REUSED` |
 

@@ -46,6 +46,5 @@ Clients might also expect one sender's requests to be mined in the order they we
 
 - At most 16 of a sender's transactions wait behind a stuck one.
 - Throughput per sender is limited by the cap. More throughput comes from more senders.
-- If every in-flight transaction of a sender is stuck with no fee bumps left, the sender takes on no new work until they're mined. `/health` shows this.
+- If every in-flight transaction of a sender is stuck with no fee bumps left, the sender takes on no new work until they're mined. The logs show this.
 - A sender's queue of waiting requests has no limit. If a flood of requests becomes a problem, the next step is a per-sender queue limit that returns `429`.
-- `/health` shows each sender's in-flight count and queue length.

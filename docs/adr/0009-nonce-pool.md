@@ -99,7 +99,7 @@ The filler doesn't count toward the per-sender cap ([ADR 0012](0012-in-flight-ca
 
 Usually a new request fills a gap within seconds, because `take()` always hands out the smallest nonce. The filler only acts when requests stop coming.
 
-If the gap was caused by insufficient funds, the filler will probably be rejected for the same reason. Its nonce goes back to the pool, and it tries again after the next `stuckAfterMs`. `/health` shows the sender as blocked at that nonce until it's funded.
+If the gap was caused by insufficient funds, the filler will probably be rejected for the same reason. Its nonce goes back to the pool, and it tries again after the next `stuckAfterMs`. The logs show each rejected gap fill until the sender is funded.
 
 ### Restart
 
@@ -128,5 +128,5 @@ The pool isn't saved. At startup it's rebuilt for each sender from SQLite and th
 - A nonce whose transaction was clearly rejected is reused by the next request, or filled by the gap filler, so later nonces don't stay stuck.
 - Each gap fill costs the gas of one plain transfer on that chain.
 - Parallel broadcasts can reach a node out of order. Nodes that reject `nonce too high` instead of holding the transaction make those requests fail, and clients resubmit them.
-- A sender that runs out of funds is blocked at its lowest gap until it's topped up, and `/health` shows this.
+- A sender that runs out of funds is blocked at its lowest gap until it's topped up, and the logs show this.
 - Correctness depends on the service being the only user of its keys ([ADR 0001](0001-single-instance-exclusive-keys.md)).

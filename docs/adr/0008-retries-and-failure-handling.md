@@ -46,7 +46,7 @@ The monitor runs one loop per chain, every `pollIntervalMs`. For each `submitted
    - If a node rejects a replacement, for example with `replacement transaction underpriced`, nothing changes. The earlier attempt is still valid, the bump counts toward `maxBumps`, and the next bump uses a higher fee.
 3. **Check whether another transaction has taken the nonce** ([ADR 0009](0009-nonce-pool.md)).
 
-**A broadcast transaction is never marked `failed` because time ran out.** It can still be mined, so it stays `submitted` until a receipt appears or another transaction uses its nonce. When the bumps run out, the service stops paying more but keeps watching, and `/health` and the logs show the transaction as stuck.
+**A broadcast transaction is never marked `failed` because time ran out.** It can still be mined, so it stays `submitted` until a receipt appears or another transaction uses its nonce. When the bumps run out, the service stops paying more but keeps watching, and the logs show the transaction as stuck.
 
 Two choices within the monitor:
 
@@ -74,6 +74,6 @@ Two choices within the monitor:
 
 ## Consequences
 
-- A transaction whose bumps have run out and that still isn't mined stays `submitted` indefinitely. It needs attention from whoever runs the service, and `/health` shows it.
+- A transaction whose bumps have run out and that still isn't mined stays `submitted` indefinitely. It needs attention from whoever runs the service, and the logs show it.
 - Clients only see `failed` for requests that never reached the chain, or whose nonce was taken by another transaction.
 - Classifying broadcast errors depends on node error messages, which differ between node implementations.

@@ -10,7 +10,7 @@ A client posts `{ chainId, sender, to, value, data }` and gets an id back immedi
 
 The client polls with the id to get the result.
 
-> **Status:** the design below is agreed, and implementation has started. So far: tooling, per-chain config, env parsing and startup checks, the signer registry, the SQLite store, the nonce pool, gas and fee pricing, the RPC clients and broadcast loop, the worker, the monitor and gap filler, logging and the test harness. The HTTP API and startup wiring (restart recovery, starting the worker and monitors) aren't built yet. Some details will be settled during implementation; see [Open items](#open-items).
+> **Status:** implemented as designed below. `npm run dev` runs the service; see [Development](#development). The decisions made along the way are in the ADRs.
 
 ## Development
 
@@ -103,7 +103,7 @@ flowchart LR
 
 ### Life of a request
 
-1. **Accept.** `POST /transactions` checks the body, that the chain and sender are configured, and the idempotency key. It stores the request as `queued` and returns `202` with an id. No RPC calls happen here.
+1. **Accept.** `POST /transactions` checks the body, that the chain and sender are configured, and the idempotency key. It stores the request as `queued` and returns `202` with the queued transaction, including its id. No RPC calls happen here.
 2. **Estimate and price.** Once the sender has a free slot ([ADR 0012][0012]), the worker estimates gas (plus a buffer) and prices the fee. If the estimate reverts, or the fee is above the chain's cap, the request fails here, before anything is signed.
 3. **Take a nonce** from the sender's pool. This happens as late as possible, so earlier failures never touch the pool.
 4. **Sign and save.** The signed transaction is saved as an *attempt* **before** it's broadcast.
@@ -132,6 +132,24 @@ stateDiagram-v2
 
 ## API
 
+### Response envelope
+
+Every JSON response has the same three fields, whatever the HTTP status. The HTTP status is set separately, so a client can read the body the same way every time.
+
+```json
+{ "status": "ok", "result": { "id": "…", "status": "queued", "…": "…" }, "error": null }
+```
+
+```json
+{
+  "status": "error",
+  "result": null,
+  "error": { "code": "UNSUPPORTED_CHAIN", "message": "chain 1 is not configured", "details": { "supported": [31337] } }
+}
+```
+
+`error.details` is always present: `null`, or extra information for that code (the failed fields for `VALIDATION_ERROR`, the supported chain ids for `UNSUPPORTED_CHAIN`).
+
 ### `POST /transactions`
 
 Requires an `Idempotency-Key` header: 1–255 printable ASCII characters. A UUID is recommended.
@@ -154,23 +172,27 @@ Requires an `Idempotency-Key` header: 1–255 printable ASCII characters. A UUID
 | `value` | string | Wei, as a decimal string. JS numbers lose precision on large amounts. |
 | `data` | hex string | Optional. Defaults to `0x`. |
 
-| Case | Response |
-|---|---|
-| New key | `202 { id, status: "queued" }` |
-| Same key, same body | `200` with the existing transaction and an `Idempotent-Replayed: true` header |
-| Same key, different body | `422 IDEMPOTENCY_KEY_REUSED` |
-| Missing key | `400 IDEMPOTENCY_KEY_MISSING` |
-| Invalid body | `400 VALIDATION_ERROR` |
-| Chain not configured | `400 UNSUPPORTED_CHAIN`, listing the supported chain ids |
-| Sender not configured | `400 UNKNOWN_SENDER` |
+| Case | HTTP status | Envelope |
+|---|---|---|
+| New key | `202` | `result`: the queued transaction |
+| Same key, same body | `200`, plus an `Idempotent-Replayed: true` header | `result`: the existing transaction, in its current status |
+| Same key, different body | `422` | `error.code`: `IDEMPOTENCY_KEY_REUSED` |
+| Missing key | `400` | `error.code`: `IDEMPOTENCY_KEY_MISSING` |
+| Invalid body, or not JSON | `400` | `error.code`: `VALIDATION_ERROR`; `error.details.issues` lists each field |
+| Body over 256 kB | `413` | `error.code`: `PAYLOAD_TOO_LARGE` |
+| Chain not configured | `400` | `error.code`: `UNSUPPORTED_CHAIN`; `error.details.supported` lists the chain ids |
+| Sender not configured | `400` | `error.code`: `UNKNOWN_SENDER` |
+
+A new request and a replay return the same transaction shape, so a client handles both the same way.
 
 ### `GET /transactions/:id`
 
-Returns the current state of a request, or `404 NOT_FOUND`. Track requests by this id, not by transaction hash, because a fee bump produces a new hash. Illustrative shape:
+Returns the current state of a request in `result` with `200`, or `404` with `error.code` `NOT_FOUND`. Track requests by this id, not by transaction hash, because a fee bump produces a new hash. Example `result`:
 
 ```json
 {
   "id": "…",
+  "kind": "request",
   "status": "succeeded",
   "chainId": 84532,
   "sender": "0x…",
@@ -181,26 +203,35 @@ Returns the current state of a request, or `404 NOT_FOUND`. Track requests by th
   "gasLimit": "25200",
   "hash": "0x…",
   "attempts": [
-    { "hash": "0x…", "maxFeePerGas": "…", "maxPriorityFeePerGas": "…", "broadcastAt": "…" }
+    {
+      "hash": "0x…",
+      "outcome": "accepted",
+      "fees": { "type": "eip1559", "maxFeePerGas": "…", "maxPriorityFeePerGas": "…" },
+      "createdAt": "…"
+    }
   ],
   "receipt": {
+    "transactionHash": "0x…",
     "blockNumber": "…",
     "blockHash": "0x…",
     "gasUsed": "21000",
     "effectiveGasPrice": "…",
     "status": "success"
   },
-  "error": null,
+  "failure": null,
   "createdAt": "…",
   "updatedAt": "…"
 }
 ```
 
-`hash` is the attempt that was mined. While the request is still `submitted`, it's the latest attempt.
+- **Every field is always present.** Anything the request doesn't have yet is `null`: `nonce`, `gasLimit` and `hash` until it's signed, `receipt` until it's mined.
+- **`hash`** is the attempt that was mined. While the request is still `submitted`, it's the latest attempt.
+- **`failure`** is set when `status` is `failed`: its `code` (see below), a one-line `message`, and the details for that code, such as `capWei` for `FEE_ABOVE_CAP`.
+- **Signed transactions are never returned.** One whose nonce is still free could be broadcast by anyone who has it ([ADR 0003][0003]).
 
 ### `GET /health`
 
-Shows RPC status for each chain. For each sender it shows transactions in flight, queued requests, open nonce gaps, and whether the sender is blocked or has stuck transactions. The exact contents will be settled with the observability work.
+Returns `Online` as plain text, outside the JSON envelope, while the service is running. It doesn't check RPCs or senders. Stuck transactions, blocked senders and rejected gap fills show up in the logs.
 
 ### Failure codes
 
@@ -306,18 +337,23 @@ The service refuses to start if:
 - Keys come from env vars. Production should use a KMS or a secret manager ([0006]).
 - Idempotency keys never expire ([0010]).
 
-## Open items
+## Observability, security and testing
 
-To settle during implementation:
+These were open questions in the design and were settled during implementation.
 
-- **Observability.** Proposed:
-  - pino JSON logs carrying `txId`, `chainId`, `sender`, `nonce` and `hash`;
-  - the `/health` contents described above;
-  - possibly counters by status and by error code.
-- **Security beyond keys.** Proposed: zod validation of every request, a limit on request body size, and treating the SQLite file as sensitive ([0003]).
-- **Testing.** Proposed:
-  - vitest unit tests for the nonce pool, the fee math and error classification;
-  - integration tests against anvil, which can reproduce stuck transactions (automatic mining off), dropped transactions (`anvil_dropTransaction`) and fee spikes (`anvil_setNextBlockBaseFeePerGas`).
+- **Observability:**
+  - pino JSON logs, each carrying the `txId` and `chainId` it concerns, plus the `sender`, `nonce` and `hash` where relevant;
+  - a line when a request is submitted, mined or fails, when a stuck transaction is replaced or resent, and when a broadcast or gap fill is rejected;
+  - `/health` answers `Online`. There are no metrics.
+- **Security beyond keys:**
+  - every request is validated with zod, and unknown fields are rejected;
+  - request bodies are limited to 256 kB;
+  - the service listens on `127.0.0.1` by default, since the API has no auth;
+  - responses never include signed transactions, and the SQLite file is treated as sensitive ([0003]).
+- **Testing:**
+  - vitest unit tests for the pure logic: nonce pool, fee math, error classification, store, config and API;
+  - integration tests against anvil, which reproduce stuck transactions (automatic mining off), dropped transactions (`anvil_dropTransaction`), fee spikes (`anvil_setNextBlockBaseFeePerGas`), nonces used outside the service, and restarts;
+  - one end-to-end test that starts the real service and uses it over HTTP only.
 
 ## Architecture decision records
 
