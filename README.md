@@ -332,6 +332,17 @@ The service refuses to start if:
 | RPC URL pointing at the wrong chain | The service refuses to start | [0005] |
 | Reorg removes a mined transaction | **Not handled.** The first receipt is final. | [0004] |
 
+## Assumptions
+
+- **One instance, and it's the only user of its keys.** Only this process hands out nonces for the configured keys ([0001]). Anything else sending from the same key makes requests fail with `nonce too low` or `NONCE_TAKEN`.
+- **Each RPC URL behaves like a single node.** A clear rejection from it means no node took the transaction ([0009]).
+- **The first receipt is final.** There is no reorg handling ([0004]).
+- **Clients poll and resubmit.** They poll `GET /transactions/:id` for the result ([0002]). When a request fails without reaching the chain, they resubmit it with a new `Idempotency-Key` ([0009]). They wait for one transaction to be mined before sending another that depends on it ([0012]).
+- **A trusted network.** There's no authentication, as the spec allows. The service listens on `127.0.0.1` by default.
+- **Transfers and contract calls only.** `to` is required, so contracts can't be deployed.
+- **Chains.** EIP-1559 fees unless a chain's config says `legacy`, and every configured RPC is reachable at startup ([0005], [0007]). The fee caps in the example chain files are placeholders to set per deployment.
+- **The spec's `network` field is the chain id,** named `chainId` in this API ([0005]).
+
 ## Known limitations
 
 - Runs as a single instance, and assumes nothing else sends from its keys ([0001]).
@@ -348,6 +359,20 @@ The service refuses to start if:
 - On OP-stack L2s the L1 data fee isn't modelled, so senders need slightly more balance than gas × fee ([0007]).
 - Keys come from env vars. Production should use a KMS or a secret manager ([0006]).
 - Idempotency keys never expire ([0010]).
+
+## What I'd improve with more time
+
+1. **Throughput per sender.** The spec's target is hundreds of transactions a second, with more than one per block on every network. On anvil the service does about 125 transfers/s with 5 senders. A sender's slot is only freed when the monitor sees the receipt on its 500 ms poll, so the cap and the poll interval set the pace. Next steps:
+   - watch new blocks (a WebSocket subscription, or `eth_getBlockReceipts` per block), so slots free on the next block instead of the next poll;
+   - tune the in-flight cap per chain;
+   - spread load across more senders.
+2. **More than one instance.** Split senders across instances, each owning its own keys, or move nonce ownership into Postgres with a lease per sender ([0001]).
+3. **Reorg safety.** A confirmation depth per chain, with a reorged transaction going back to `submitted` ([0004]).
+4. **Fewer failed requests.** Retry `nonce too high` inside the service instead of failing the request, and look up the receipt after a rejection, so load-balanced RPCs are safe too ([0008], [0009]).
+5. **A gap filler,** for a sender whose requests stop right after a rejection ([0009]).
+6. **Observability.** Metrics for queue depth, in-flight and stuck transactions, fee bumps and latency, and a `/health` that checks each chain's RPC.
+7. **Security.** API authentication and rate limits, KMS or HSM signing, and spending limits per key ([0006]).
+8. **API.** Webhooks or long-polling for results ([0002]), an expiry for idempotency keys ([0010]), and contract deployment and client-set gas. Batching through EIP-7702 is the path if batching is ever needed ([0011]).
 
 ## Observability, security and testing
 
@@ -406,6 +431,27 @@ Latest results, on a laptop against a local anvil node. They show how the servic
 - **The clean phase's latency is queueing.** All 1,000 requests arrive at once, but at most 80 are in flight (5 senders × a cap of 16). A slot only frees when the monitor sees the receipt, on its 500 ms poll ([0012]).
 - **The faulted phase's long tail comes from blackholed transactions.** Each one holds up its sender until the monitor replaces it after `stuckAfterMs`, which is 5 s on anvil ([0008]).
 - **Lost replies never caused a double send.** Every one of them was mined, and the exactly-once check still passed ([0008], [0009]).
+
+## Use of a coding agent
+
+I built this with Claude Code, Anthropic's coding agent, running Claude Opus 5.5.
+
+- **Design before code.** I gave the agent the spec and asked to settle the design before writing any code. We went through sync vs async, persistence, nonce management, gas, retries and idempotency one decision at a time, and each decision became an ADR. The nonce pool is adapted from a Rust implementation I'd built before. Reviewing it with the agent led to the rule the design rests on: a nonce only goes back to the pool when no node can have the transaction.
+- **Built in small steps, test first.** Each piece was built test-first: tests written, run to see them fail, then the code. I reviewed each piece before it was committed. The agent ran the type check, lint, tests and local anvil nodes itself.
+- **Simplified along the way.** Where the design grew too complex for the scope, I cut it back:
+  - a pre-broadcast retry window, several rejection states and the gap filler were removed;
+  - a folder restructure was reverted;
+  - `/health` became a plain `Online`.
+  The ADRs record what was dropped and why.
+- **What the agent caught.** For example:
+  - viem's `NonceTooLowError` also matches "already known";
+  - handing a dropped transaction's nonce to another request can execute a request twice;
+  - typescript-eslint doesn't support TypeScript 7 yet.
+- **How it was checked.** Unit tests, integration tests against anvil for each edge case, and the end-to-end and stress scripts described above.
+
+My role was the design decisions and reviewing every change. The agent wrote most of the code, tests and docs.
+
+The agent session is included with the submission: **[add the link or file name of the session export]**
 
 ## Architecture decision records
 
