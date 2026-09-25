@@ -12,6 +12,37 @@ The client polls with the id to get the result.
 
 > **Status:** implemented as designed below. `npm run dev` runs the service; see [Development](#development). The decisions made along the way are in the ADRs.
 
+## Quickstart
+
+Send one transfer through the service on a local anvil node. Run `npm install` first; anvil comes with [Foundry](https://book.getfoundry.sh/).
+
+1. Start anvil. It serves chain 31337 on port 8545, with ten funded dev accounts.
+
+   ```bash
+   anvil
+   ```
+
+2. In another terminal, start the service with anvil's first dev key. The key is public: never use it on a real network. Inline variables take precedence over a `.env` file.
+
+   ```bash
+   RPC_URL_31337=http://127.0.0.1:8545 SIGNER_PRIVATE_KEYS=0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80 npm run dev
+   ```
+
+3. Send 0.001 ETH from that key's account to anvil's second account. Every POST needs an `Idempotency-Key` header. The reply is `202`, and `result.id` identifies the request.
+
+   ```bash
+   curl -s http://127.0.0.1:3000/transactions \
+     -H 'content-type: application/json' \
+     -H "idempotency-key: $(uuidgen)" \
+     -d '{"network":31337,"sender":"0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266","to":"0x70997970C51812dc3A010C7d01b50e0d17dc79C8","value":"1000000000000000"}'
+   ```
+
+4. Poll with that id. Within a few seconds `result.status` is `succeeded`, and `result.receipt` holds the receipt.
+
+   ```bash
+   curl -s http://127.0.0.1:3000/transactions/<id>
+   ```
+
 ## Development
 
 Requires Node.js 24+ and [Foundry](https://book.getfoundry.sh/)'s `anvil`, which the integration tests start themselves.
@@ -339,6 +370,19 @@ The startup log lists each chain's settings in effect, without its RPC URLs.
 - **Chains.** Standard EVM chains: plain EIP-1559 or legacy transactions over standard JSON-RPC, and every configured RPC is reachable at startup ([0005], [0007]). The 500 gwei default fee cap is meant to be tightened per chain.
 - **The spec's `network` field is the chain id,** an integer such as `84532`, not a name such as `base-sepolia` ([0005]).
 
+## Tradeoffs
+
+The main choices, what each one gains and what it costs. Each ADR lists the alternatives in full.
+
+- **An asynchronous API over a blocking one** ([0002]). POST returns without calling an RPC, whatever the chain is doing, and clients track a stable id rather than a hash that changes with each fee bump. The cost: clients poll, and a request that would revert still gets `202` before it fails.
+- **One instance with SQLite over a shared database** ([0001], [0003]). One process owns every sender's nonces, so there are no locks, and each signed transaction is on disk before it's sent. The cost: no scaling out, and a restart means brief downtime.
+- **Failing a request over retrying it inside the service** ([0008], [0009]). A clear rejection, or an RPC failure before signing, ends the request, and the pool resyncs so a resubmitted request gets a usable nonce. This keeps the worker simple. The cost: clients handle `BROADCAST_REJECTED` and `RPC_UNAVAILABLE` by resubmitting, and on nodes that reject out-of-order nonces, parallel broadcasts can fail with `nonce too high`.
+- **Keeping a nonce over reusing it when a transaction looks dropped** ([0009]). Once a node may have a transaction, its nonce stays with its request, so a request can never execute twice. The cost: a transaction that never gets mined keeps its request `submitted`, and holds its nonce and a slot, until another transaction uses the nonce.
+- **Concurrency per sender over ordering** ([0012]). Up to 16 of a sender's transactions are in flight at once, so one sender gets more than one per block. The cost: the order they're mined in isn't guaranteed.
+- **A required idempotency key over an optional one** ([0010]). A retried POST can never send money twice. The cost: every client generates a key per request, and keys are kept forever.
+- **The first receipt is final, over waiting for confirmations** ([0004]). Results arrive as soon as a transaction is mined. The cost: a reorg can undo a result already reported.
+- **Env vars only for what differs between chains** ([0005]). Adding a chain is one env var. The cost: any other setting that should differ for one chain needs a code change.
+
 ## Known limitations
 
 - Runs as a single instance, and assumes nothing else sends from its keys ([0001]).
@@ -451,13 +495,12 @@ Latest results, on a laptop against a local anvil node. They show how the servic
 
 I built this with Claude Code, Anthropic's coding agent, running Claude Opus 5.5.
 
-- **Design before code.** I gave the agent the spec and asked to settle the design before writing any code. We went through sync vs async, persistence, nonce management, gas, retries and idempotency one decision at a time, and each decision became an ADR. The nonce pool is adapted from a Rust implementation I'd built before. Reviewing it with the agent led to the rule the design rests on: a nonce only goes back to the pool when no node can have the transaction.
+- **Design before code.** I gave the agent the spec and asked it to settle the design before writing any code. We went through sync vs async, persistence, nonce management, gas, retries and idempotency one decision at a time, and each decision became an ADR. The nonce pool is adapted from a Rust implementation I'd built before. Reviewing it with the agent led to the rule the design rests on: a nonce only goes back to the pool when no node can have the transaction.
 - **Built in small steps, test first.** Each piece was built test-first: tests written, run to see them fail, then the code. I reviewed each piece before it was committed. The agent ran the type check, lint, tests and local anvil nodes itself.
-- **Simplified along the way.** Where the design grew too complex for the scope, I cut it back:
+- **Simplified along the way.** Where the design grew too complex for the scope, I cut it back, and the ADRs record what was dropped and why:
   - a pre-broadcast retry window, several rejection states and the gap filler were removed;
   - a folder restructure was reverted;
   - `/health` became a plain `Online`.
-  The ADRs record what was dropped and why.
 - **What the agent caught.** For example:
   - viem's `NonceTooLowError` also matches "already known";
   - handing a dropped transaction's nonce to another request can execute a request twice;
