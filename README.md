@@ -87,7 +87,7 @@ flowchart LR
     Worker -->|save attempt| Store
     Worker -->|"estimate, fees, broadcast"| RPC[(RPC nodes)]
     Monitor["Monitor<br/>(one per chain)"] <--> Store
-    Monitor -->|"receipts, resends, fee bumps, gap fills"| RPC
+    Monitor -->|"receipts, resends, fee bumps"| RPC
     Monitor <--> Pools
 ```
 
@@ -96,7 +96,7 @@ flowchart LR
 | **API** | Validates requests, enforces idempotency, stores each request as `queued`, and serves status. Never calls an RPC. |
 | **Worker** | Takes each queued request through: estimate gas → price fees → take nonce → sign → save attempt → broadcast. Works on at most `maxInFlightPerSender` requests per sender at a time. |
 | **Nonce pools** | One per (chain, sender). Hands out the smallest free nonce. Takes a nonce back only when no node can have the transaction. |
-| **Monitor** | One loop per chain. Looks for receipts, resends or fee-bumps stuck transactions, fills nonce gaps, and detects nonces used outside the service. |
+| **Monitor** | One loop per chain. Looks for receipts, resends or fee-bumps stuck transactions, and detects nonces used outside the service. |
 | **Store** | SQLite tables `transactions` and `attempts`. The source of truth: nonce pools are rebuilt from it after a restart. |
 | **Chain registry** | One config file per chain, plus `RPC_URL_<chainId>` env vars. Checked against each RPC at startup. |
 | **Signer registry** | Maps each sender address to a viem `Account`, built from `SIGNER_PRIVATE_KEYS`. |
@@ -192,7 +192,6 @@ Returns the current state of a request in `result` with `200`, or `404` with `er
 ```json
 {
   "id": "…",
-  "kind": "request",
   "status": "succeeded",
   "chainId": 84532,
   "sender": "0x…",
@@ -231,7 +230,7 @@ Returns the current state of a request in `result` with `200`, or `404` with `er
 
 ### `GET /health`
 
-Returns `Online` as plain text, outside the JSON envelope, while the service is running. It doesn't check RPCs or senders. Stuck transactions, blocked senders and rejected gap fills show up in the logs.
+Returns `Online` as plain text, outside the JSON envelope, while the service is running. It doesn't check RPCs or senders. Stuck transactions and rejected broadcasts show up in the logs.
 
 ### Failure codes
 
@@ -312,7 +311,7 @@ The service refuses to start if:
 | Transaction stuck in the mempool | Replaced at the same nonce with higher fees, up to `maxBumps` and within the cap | [0008] |
 | Transaction dropped from a mempool | Resent or fee-bumped at the same nonce. The nonce never goes back to the pool. | [0008], [0009] |
 | Original mined after a replacement was sent | Receipts are checked for every attempt, so either outcome is recognised | [0008] |
-| Rolled-back nonce with no request to fill it | The gap filler sends 0 ETH from the sender to itself at that nonce. It doesn't count toward the per-sender cap. | [0009], [0012] |
+| Rolled-back nonce with later nonces in flight | The sender's next request takes that nonce first, which unblocks the later ones | [0009] |
 | Parallel broadcasts arrive out of order (`nonce too high`) | The request fails and its nonce goes back to the pool; the client resubmits | [0009] |
 | Nonce used outside the service, before our broadcast | The request fails with `nonce too low`. The pool resyncs from the chain, so the next request gets a fresh nonce. | [0009] |
 | Nonce used outside the service, after our broadcast | `failed` with `NONCE_TAKEN`; the pool is resynced from the chain | [0001], [0009] |
@@ -330,6 +329,7 @@ The service refuses to start if:
 - A sender's queue of waiting requests has no limit ([0012]).
 - Node error messages differ between node implementations, so classifying broadcast errors is best effort. Unrecognised errors become `BROADCAST_REJECTED` ([0008]).
 - A rejected broadcast fails the request rather than retrying it. The client resubmits with a new key ([0009]).
+- If a request is rejected while the same sender's later transactions are in flight, those wait until the sender's next request fills the rejected nonce. With no further requests, they stay in the mempool ([0009]).
 - Each RPC URL is assumed to behave like a single node. A load balancer that accepts a tx on one backend and returns another backend's error can leave a request marked `failed` although it ran ([0009]).
 - Every configured RPC must be reachable at startup ([0005]).
 - No contract deployment, no client-supplied gas or fees, and no batching ([0011]).
@@ -343,7 +343,7 @@ These were open questions in the design and were settled during implementation.
 
 - **Observability:**
   - pino JSON logs, each carrying the `txId` and `chainId` it concerns, plus the `sender`, `nonce` and `hash` where relevant;
-  - a line when a request is submitted, mined or fails, when a stuck transaction is replaced or resent, and when a broadcast or gap fill is rejected;
+  - a line when a request is submitted, mined or fails, when a stuck transaction is replaced or resent, and when a broadcast is rejected;
   - `/health` answers `Online`. There are no metrics.
 - **Security beyond keys:**
   - every request is validated with zod, and unknown fields are rejected;

@@ -18,7 +18,6 @@ import {
   type TxFailure,
   txId,
   type TxId,
-  type TxKind,
   type TxStatus,
 } from './types'
 
@@ -64,7 +63,6 @@ export const ApiResponse = {
  */
 export type ApiTransaction = {
   id: TxId
-  kind: TxKind
   status: TxStatus
   chainId: ChainId
   sender: Address
@@ -231,7 +229,6 @@ function hashRequest(request: { chainId: ChainId; sender: Address; to: Address; 
 function toApiTransaction(tx: Transaction, attempts: Attempt[]): ApiTransaction {
   return {
     id: tx.id,
-    kind: tx.kind,
     status: tx.status,
     chainId: tx.chainId,
     sender: tx.sender,

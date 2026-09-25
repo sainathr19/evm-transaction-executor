@@ -13,7 +13,6 @@ import {
   type TxFields,
   txId,
   type TxId,
-  type TxKind,
   type TxStatus,
   type TxWithStatus,
 } from '../types'
@@ -49,9 +48,8 @@ export type InsertResult = { created: true; tx: QueuedTx } | { created: false; t
 
 type TxRow = {
   id: string
-  kind: TxKind
-  idempotency_key: string | null
-  request_hash: string | null
+  idempotency_key: string
+  request_hash: string
   chain_id: number
   sender: string
   to_address: string
@@ -96,9 +94,9 @@ export class Store {
     const { changes } = this.#db
       .prepare(
         `INSERT INTO transactions
-           (id, kind, idempotency_key, request_hash, chain_id, sender, to_address, value, data, status, created_at, updated_at)
+           (id, idempotency_key, request_hash, chain_id, sender, to_address, value, data, status, created_at, updated_at)
          VALUES
-           (@id, 'request', @idempotencyKey, @requestHash, @chainId, @sender, @to, @value, @data, 'queued', @now, @now)
+           (@id, @idempotencyKey, @requestHash, @chainId, @sender, @to, @value, @data, 'queued', @now, @now)
          ON CONFLICT (idempotency_key) DO NOTHING`,
       )
       .run({ ...input, id: randomUUID(), value: input.value.toString(), now })
@@ -107,21 +105,6 @@ export class Store {
       .get(input.idempotencyKey) as TxRow
     const tx = toTransaction(row)
     return changes === 1 && tx.status === 'queued' ? { created: true, tx } : { created: false, tx }
-  }
-
-  /** A 0-value transfer from the sender to itself, used to fill a nonce gap (ADR 0009). */
-  insertGapFill(chain: ChainId, sender: Address): QueuedTx {
-    const id = randomUUID()
-    const now = this.#timestamp()
-    this.#db
-      .prepare(
-        `INSERT INTO transactions (id, kind, chain_id, sender, to_address, value, data, status, created_at, updated_at)
-         VALUES (?, 'gap_fill', ?, ?, ?, '0', '0x', 'queued', ?, ?)`,
-      )
-      .run(id, chain, sender, sender, now, now)
-    const tx = this.get(txId(id))
-    if (tx?.status !== 'queued') throw new Error(`gap fill ${id} was not stored as queued`)
-    return tx
   }
 
   get(id: TxId): Transaction | undefined {
@@ -230,7 +213,6 @@ export class Store {
 function toTransaction(row: TxRow): Transaction {
   const fields: TxFields = {
     id: txId(row.id),
-    kind: row.kind,
     idempotencyKey: row.idempotency_key,
     requestHash: row.request_hash,
     chainId: chainId(row.chain_id),

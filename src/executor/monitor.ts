@@ -38,10 +38,7 @@ export type MonitorDeps = {
 
 const DEFAULTS: MonitorOptions = { broadcastSends: 3, broadcastDelayMs: 250, nonceTakenPolls: 2 }
 
-/**
- * One per chain. Every pollIntervalMs it checks each submitted request (ADR 0008, layer 4), then
- * lets the worker fill any nonce gap that has been open for stuckAfterMs (ADR 0009).
- */
+/** One per chain. Every pollIntervalMs it checks each submitted request (ADR 0008, layer 4). */
 export class Monitor {
   readonly #deps: MonitorDeps
   readonly #options: MonitorOptions
@@ -73,7 +70,7 @@ export class Monitor {
   }
 
   async tick(): Promise<void> {
-    const { store, chain, signers, worker } = this.#deps
+    const { store, chain } = this.#deps
 
     // One nonce read per sender per tick, shared by all of its requests.
     const confirmed = new Map<Address, Promise<Nonce>>()
@@ -91,8 +88,6 @@ export class Monitor {
         this.#log.warn({ err: error, txId: tx.id }, 'could not check request')
       }
     }
-
-    for (const sender of signers.keys()) worker.fillGap(this.#chainId, sender, chain.config.stuckAfterMs)
   }
 
   async #run(): Promise<void> {

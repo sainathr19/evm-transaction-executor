@@ -2,11 +2,6 @@ import { describe, expect, test } from 'vitest'
 import { NoncePool } from '../../src/executor/nonce-pool'
 import { nonce } from '../../src/types'
 
-function fakeClock() {
-  let now = 0
-  return { now: () => now, advance: (ms: number) => (now += ms) }
-}
-
 function takeN(pool: NoncePool, n: number): number[] {
   return Array.from({ length: n }, () => pool.take())
 }
@@ -68,45 +63,6 @@ describe('reset', () => {
   })
 })
 
-describe('takeGap', () => {
-  test('returns a gap only once it has been open for the given time', () => {
-    const clock = fakeClock()
-    const pool = new NoncePool(nonce(5), [], clock.now)
-    takeN(pool, 2) // 5, 6
-    pool.rollback(nonce(5))
-
-    clock.advance(999)
-    expect(pool.hasGap(1_000)).toBe(false)
-    expect(pool.takeGap(1_000)).toBeUndefined()
-
-    clock.advance(1)
-    expect(pool.hasGap(1_000)).toBe(true)
-    expect(pool.takeGap(1_000)).toBe(5)
-    expect(pool.gaps).toEqual([])
-    expect(pool.take()).toBe(7)
-  })
-
-  test('never returns the top', () => {
-    const pool = new NoncePool(nonce(5))
-    expect(pool.takeGap(0)).toBeUndefined()
-    expect(pool.take()).toBe(5)
-  })
-
-  test('a gap that reopens waits the full time again', () => {
-    const clock = fakeClock()
-    const pool = new NoncePool(nonce(5), [], clock.now)
-    takeN(pool, 2) // 5, 6
-    pool.rollback(nonce(5))
-    clock.advance(1_000)
-    expect(pool.takeGap(1_000)).toBe(5)
-
-    pool.rollback(nonce(5)) // the gap filler was rejected
-    expect(pool.takeGap(1_000)).toBeUndefined()
-    clock.advance(1_000)
-    expect(pool.takeGap(1_000)).toBe(5)
-  })
-})
-
 describe('rebuild after a restart', () => {
   test.each([
     {
@@ -146,13 +102,5 @@ describe('rebuild after a restart', () => {
     const pool = NoncePool.rebuild({ confirmed: nonce(confirmed), pending: nonce(pending), held: held.map(nonce) })
     expect(pool.top).toBe(top)
     expect(pool.gaps).toEqual(gaps)
-  })
-
-  test('gaps found at startup wait before the gap filler may take them', () => {
-    const clock = fakeClock()
-    const pool = NoncePool.rebuild({ confirmed: nonce(10), pending: nonce(10), held: [nonce(11)] }, clock.now)
-    expect(pool.takeGap(1_000)).toBeUndefined()
-    clock.advance(1_000)
-    expect(pool.takeGap(1_000)).toBe(10)
   })
 })

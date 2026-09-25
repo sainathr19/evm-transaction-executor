@@ -43,16 +43,13 @@ export async function recover({ store, chains, signers, senders, worker, logger 
     if (live.length > 0) {
       // 2. Saved before the restart, so it may have been sent: the monitor resends it if it isn't mined.
       store.markSubmitted(tx.id, live[live.length - 1].hash)
-    } else if (tx.kind === 'gap_fill') {
-      // Its nonce was never saved. If the gap is still there, the monitor starts a new fill.
-      store.markFailed(tx.id, { code: 'INTERNAL_ERROR', message: 'interrupted by a restart before it was signed' })
     }
   }
 
   // 3. Requests already broadcast keep their slots until they're final.
   let inFlight = 0
   for (const tx of store.listByStatus(['submitted'])) {
-    if (tx.kind !== 'request' || !chains.has(tx.chainId)) continue
+    if (!chains.has(tx.chainId)) continue
     senders.get(tx.chainId, tx.sender).active.add(tx.id)
     inFlight++
   }

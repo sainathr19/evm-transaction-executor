@@ -63,7 +63,6 @@ test('stores a new request as queued', () => {
   expect(inserted.created).toBe(true)
   expect(store.get(inserted.tx.id)).toEqual({
     id: inserted.tx.id,
-    kind: 'request',
     idempotencyKey: 'key-1',
     requestHash: 'hash-1',
     chainId: ANVIL,
@@ -90,20 +89,6 @@ test('returns the existing request when an idempotency key is reused', () => {
   expect(second.tx.id).toBe(first.tx.id)
   expect(second.tx.requestHash).toBe('hash-1')
   expect(store.listByStatus(['queued'])).toHaveLength(1)
-})
-
-test('stores gap fills as queued 0-value transfers to the sender, with no idempotency key', () => {
-  const first = store.insertGapFill(ANVIL, ADDRESS_0)
-  const second = store.insertGapFill(ANVIL, ADDRESS_0)
-  expect(first).toMatchObject({
-    kind: 'gap_fill',
-    status: 'queued',
-    idempotencyKey: null,
-    to: ADDRESS_0,
-    value: 0n,
-    data: '0x',
-  })
-  expect(second.id).not.toBe(first.id)
 })
 
 test('records an attempt together with the nonce and gas limit', () => {

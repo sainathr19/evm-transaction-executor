@@ -99,12 +99,3 @@ test('in-flight requests keep their slots, so queued ones still wait for them', 
   expect(after.store.get(inFlight.id)!.status).toBe('succeeded')
   expect(after.store.get(waiting.id)!.status).toBe('submitted')
 })
-
-test('drops a gap fill that was interrupted before it was signed; the monitor starts a new one if needed', async () => {
-  const before = await createRuntime(node.url)
-  const fill = before.store.insertGapFill(ANVIL, ADDRESS_0)
-
-  const after = await createRuntime(node.url, { store: before.store })
-  await after.worker.idle()
-  expect(after.store.get(fill.id)).toMatchObject({ status: 'failed', failure: { code: 'INTERNAL_ERROR' } })
-})

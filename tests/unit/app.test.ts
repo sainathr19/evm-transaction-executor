@@ -177,7 +177,6 @@ describe('GET /transactions/:id', () => {
     expect(res.status).toBe(200)
     expect(await resultOf(res)).toMatchObject({
       id,
-      kind: 'request',
       status: 'queued',
       chainId: 31337,
       sender: ADDRESS_0,

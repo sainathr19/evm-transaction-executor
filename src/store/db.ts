@@ -9,9 +9,8 @@ export type Db = Database.Database
 const SCHEMA = `
 CREATE TABLE IF NOT EXISTS transactions (
   id              TEXT PRIMARY KEY,
-  kind            TEXT NOT NULL CHECK (kind IN ('request', 'gap_fill')),
-  idempotency_key TEXT UNIQUE,
-  request_hash    TEXT,
+  idempotency_key TEXT NOT NULL UNIQUE,
+  request_hash    TEXT NOT NULL,
   chain_id        INTEGER NOT NULL,
   sender          TEXT NOT NULL,
   to_address      TEXT NOT NULL,
