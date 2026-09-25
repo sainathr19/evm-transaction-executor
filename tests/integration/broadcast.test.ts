@@ -92,7 +92,7 @@ async function flakyRpc(failures: number) {
         res.writeHead(502).end()
         return
       }
-      const { id } = JSON.parse(body)
+      const { id } = JSON.parse(body) as { id: number }
       res.writeHead(200, { 'content-type': 'application/json' })
       res.end(JSON.stringify({ jsonrpc: '2.0', id, result: `0x${anvil.id.toString(16)}` }))
     })

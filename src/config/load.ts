@@ -33,9 +33,7 @@ export function loadConfig(env: Env, files: ChainFile[] = CHAIN_FILES): AppConfi
   for (const [chainId, urls] of rpcUrls) {
     const file = files.find((candidate) => candidate.chain.id === chainId)
     if (!file) {
-      throw new ConfigError(
-        `RPC_URL_${chainId} is set, but src/config/chains/ has no config file for chain ${chainId}`,
-      )
+      throw new ConfigError(`RPC_URL_${chainId} is set, but src/config/chains/ has no config file for chain ${chainId}`)
     }
     chains.set(chainId, { ...withDefaults(file), rpcUrls: urls })
   }

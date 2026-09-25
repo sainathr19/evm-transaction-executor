@@ -20,13 +20,25 @@ Requires Node.js 24+ and [Foundry](https://book.getfoundry.sh/)'s `anvil`, which
 npm install
 ```
 
-```bash
-npm test
-```
+Four separate checks, each of which must pass:
 
 ```bash
 npm run typecheck
 ```
+
+```bash
+npm run lint
+```
+
+```bash
+npm run format:check
+```
+
+```bash
+npm test
+```
+
+`npm run format` fixes formatting. TypeScript is pinned to 6.0 because typescript-eslint's type-aware rules don't support TypeScript 7 yet.
 
 To run the service, copy `.env.example` to `.env`, fill it in, then run:
 
@@ -55,13 +67,14 @@ tests/
 
 | Concern | Choice |
 |---|---|
-| Language and runtime | TypeScript on Node.js 24 |
+| Language and runtime | TypeScript 6.0 on Node.js 24 |
 | HTTP | Express |
 | Chain access and signing | viem |
 | Persistence | SQLite (better-sqlite3) |
 | Validation | zod |
 | Logging | pino |
-| Tests (proposed) | vitest, with anvil as a local chain |
+| Tests | vitest, with anvil as a local chain |
+| Lint and format | ESLint with type-aware typescript-eslint rules; Prettier |
 
 ## How it works
 

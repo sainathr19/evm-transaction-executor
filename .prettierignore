@@ -1,0 +1,6 @@
+node_modules/
+data/
+coverage/
+package-lock.json
+# Docs keep their hand-written tables and line breaks.
+*.md

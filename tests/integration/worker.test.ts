@@ -105,13 +105,7 @@ describe('failures before anything is signed', () => {
 
 describe('broadcast outcomes', () => {
   test('an unanswered broadcast keeps the nonce and leaves the request to the monitor', async () => {
-    const rt = await createRuntime(node.url, {
-      wrapSenders: () => [
-        async () => {
-          throw timeoutError()
-        },
-      ],
-    })
+    const rt = await createRuntime(node.url, { wrapSenders: () => [() => Promise.reject(timeoutError())] })
     const tx = rt.submit()
     await rt.worker.idle()
     expect(rt.store.get(tx.id)).toMatchObject({ status: 'submitted', nonce: 0 })
@@ -144,7 +138,11 @@ describe('broadcast outcomes', () => {
   test('when another tx already used the nonce, fails and resyncs the pool so the next request succeeds', async () => {
     const rt = await createRuntime(node.url)
     // Uses nonce 0 behind the pool's back.
-    const outsider = createWalletClient({ account: privateKeyToAccount(KEY_0), chain: anvil, transport: http(node.url) })
+    const outsider = createWalletClient({
+      account: privateKeyToAccount(KEY_0),
+      chain: anvil,
+      transport: http(node.url),
+    })
     await outsider.sendTransaction({ to: ADDRESS_1, value: 1n })
 
     const collided = rt.submit()

@@ -108,11 +108,39 @@ describe('takeGap', () => {
 
 describe('rebuild after a restart', () => {
   test.each([
-    { case: 'all our pending txs are in the mempool', confirmed: 10, pending: 13, held: [10, 11, 12], top: 13, gaps: [] },
+    {
+      case: 'all our pending txs are in the mempool',
+      confirmed: 10,
+      pending: 13,
+      held: [10, 11, 12],
+      top: 13,
+      gaps: [],
+    },
     { case: 'a nonce between held ones is available', confirmed: 10, pending: 13, held: [10, 12], top: 13, gaps: [11] },
-    { case: 'held txs dropped from the mempool keep their nonces', confirmed: 10, pending: 10, held: [10, 11], top: 12, gaps: [] },
-    { case: 'available nonces below a held one are gaps', confirmed: 10, pending: 10, held: [12], top: 13, gaps: [10, 11] },
-    { case: 'held nonces the chain already used are ignored', confirmed: 10, pending: 10, held: [8], top: 10, gaps: [] },
+    {
+      case: 'held txs dropped from the mempool keep their nonces',
+      confirmed: 10,
+      pending: 10,
+      held: [10, 11],
+      top: 12,
+      gaps: [],
+    },
+    {
+      case: 'available nonces below a held one are gaps',
+      confirmed: 10,
+      pending: 10,
+      held: [12],
+      top: 13,
+      gaps: [10, 11],
+    },
+    {
+      case: 'held nonces the chain already used are ignored',
+      confirmed: 10,
+      pending: 10,
+      held: [8],
+      top: 10,
+      gaps: [],
+    },
   ])('$case', ({ confirmed, pending, held, top, gaps }) => {
     const pool = NoncePool.rebuild({ confirmed, pending, held })
     expect(pool.top).toBe(top)
