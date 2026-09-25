@@ -23,17 +23,17 @@ Retries happen at four layers.
 
 ### 3. The broadcast
 
-- Broadcasts use a separate viem client with automatic retries and fallback turned off. Our own loop sends the same signed transaction up to 3 times, moving to the next URL each time, and records whether any send got no answer.
-- **Why our own loop:** viem's automatic retries hide what happened to earlier sends.
-  - A first send can reach a node and lose its reply. The retry then gets an error that looks like a rejection.
-  - On a fast chain, the first send can even be mined before the retry. The retry then gets `nonce too low`, because geth only answers `already known` while the transaction is still in its mempool.
+- Broadcasts use one viem client per URL, without viem's fallback transport. Our own loop sends the same signed transaction up to 3 times, moving to the next URL each time, and records whether any send got no answer.
+- **Why our own loop:** viem's fallback transport moves to the next URL on almost any error, without telling the caller that an earlier send went unanswered. viem's `sendRawTransaction` itself doesn't retry (it passes `retryCount: 0`); we also turn retries off on the broadcast transports, so this stays true whatever send path the code uses.
+  - A first send can reach a node and lose its reply. The next send then gets an error that looks like a rejection.
+  - On a fast chain, the first send can even be mined before the next one. The next send then gets `nonce too low`, because geth only answers `already known` while the transaction is still in its mempool.
   - Treating that as a rejection would execute the request twice.
 - **Classifying the result:**
   - Accepted, or `already known`: the request becomes `submitted`.
   - Any send unanswered: the request becomes `submitted`, keeps its nonce, and the monitor resolves it.
   - Every send clearly rejected: handled as described in [ADR 0009](0009-nonce-pool.md). The nonce is rolled back or reset, and the request is retried or marked `failed`.
 - **What counts as an answer:** only a JSON-RPC error response from the node. Timeouts, dropped connections and HTTP errors, including `429` and `5xx`, count as no answer. That's the safe side: the nonce is kept and the monitor resolves the transaction.
-- **Matching node errors:** we classify the node's error message ourselves, using case-insensitive patterns for `already known` (anvil says `transaction already imported`), `nonce too low`, `nonce too high`, `insufficient funds` and `underpriced`. We don't use viem's typed errors for this. viem's `NonceTooLowError` also matches `already known`, so using it would treat an accepted transaction as a rejection. Node software words errors differently, so this is best effort. An unrecognised error becomes `BROADCAST_REJECTED` and keeps the node's message.
+- **Matching node errors:** we classify the node's error message ourselves, using case-insensitive patterns for `already known` (anvil says `transaction already imported`), `nonce too low`, `nonce too high` and `insufficient funds`. Every other rejection, including `replacement transaction underpriced`, is handled the same way, so it needs no pattern. We don't use viem's typed errors for this. viem's `NonceTooLowError` also matches `already known`, so using it would treat an accepted transaction as a rejection. Node software words errors differently, so this is best effort. An unrecognised error becomes `BROADCAST_REJECTED` and keeps the node's message.
 
 ### 4. After broadcast: the monitor
 
@@ -69,7 +69,7 @@ Two choices within the monitor:
 - **Mark a `submitted` transaction `failed` after a timeout.** Rejected. It can still be mined, and a client that then retries would execute the request twice.
 - **Detect dropped transactions with `eth_getTransactionByHash`.** Rejected. Each node has its own mempool, and load-balanced RPCs give inconsistent answers. Resending the same signed transaction is harmless, so we don't need to know.
 - **Measure stuck in blocks.** Rejected, for the reasons above.
-- **Let viem retry broadcasts.** Rejected, for the reasons above.
+- **Broadcast through viem's fallback transport.** Rejected, for the reasons above.
 
 ## Consequences
 
