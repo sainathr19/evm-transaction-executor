@@ -1,6 +1,6 @@
 import type { Address, Hex, LocalAccount } from 'viem'
 import { privateKeyToAccount } from 'viem/accounts'
-import { ConfigError } from './config/error'
+import { ConfigError } from './error'
 
 /**
  * Sender address (checksummed) → the account that signs for it. The rest of the code only

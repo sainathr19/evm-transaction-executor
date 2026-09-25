@@ -40,10 +40,9 @@ npm run dev
 src/
   main.ts        startup: load and check config, then start the service
   app.ts         HTTP API
-  config/        env parsing, one file per chain, defaults
+  config/        env parsing, one file per chain, defaults, signer registry
   executor/      worker, monitor, nonce pool, gas pricing, broadcast, RPC clients
   store/         SQLite schema and queries
-  signers.ts     sender address → signing account
   logger.ts
   types.ts       types shared by the store and the executor
 tests/

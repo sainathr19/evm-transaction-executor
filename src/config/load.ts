@@ -1,9 +1,9 @@
 import type { LevelWithSilent } from 'pino'
-import { buildSigners, type Signers } from '../signers'
 import { CHAIN_FILES } from './chains'
 import { withDefaults } from './defaults'
 import { parseEnv, type Env } from './env'
 import { ConfigError } from './error'
+import { buildSigners, type Signers } from './signers'
 import type { ChainConfig, ChainFile } from './types'
 
 export type EnabledChain = ChainConfig & { rpcUrls: string[] }
