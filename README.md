@@ -61,7 +61,7 @@ src/
   types.ts       types shared by the store and the executor
 tests/
   unit/          pure logic
-  integration/   against a real anvil node, started per test file
+  integration/   against real anvil nodes that the tests start
   helpers/
 scripts/         end-to-end and stress runs against a local anvil node (not part of npm test)
 ```
@@ -131,7 +131,7 @@ stateDiagram-v2
 | `submitted` | Broadcast; hash known | no |
 | `succeeded` | Mined, and execution succeeded | yes |
 | `reverted` | Mined, but execution reverted. Gas was spent and the nonce used. The service doesn't retry it. | yes |
-| `failed` | Never made it on chain, so no gas was spent. `error.code` says why. | yes |
+| `failed` | Never made it on chain, so no gas was spent. `failure.code` says why. | yes |
 
 ## API
 
@@ -234,7 +234,7 @@ Returns the current state of a request in `result` with `200`, or `404` with `er
 }
 ```
 
-- **Every field is always present.** Anything the request doesn't have yet is `null`: `nonce`, `gasLimit` and `hash` until it's signed, `receipt` until it's mined.
+- **Every field is always present.** Anything the request doesn't have yet is `null`: `nonce` and `gasLimit` until it's signed, `hash` until it's broadcast, `receipt` until it's mined.
 - **`hash`** is the attempt that was mined. While the request is still `submitted`, it's the latest attempt.
 - **`receipt`** is the node's full receipt, including the emitted `logs` and the `from`, `to` and `transactionIndex`. Addresses are checksummed, and amounts are decimal strings.
 - **`failure`** is set when `status` is `failed`: its `code` (see below), a one-line `message`, and the details for that code, such as `capWei` for `FEE_ABOVE_CAP`.
@@ -248,7 +248,7 @@ Returns `Online` as plain text, outside the JSON envelope, while the service is 
 
 | Code | Meaning |
 |---|---|
-| `ESTIMATION_REVERTED` | Gas estimation reverted. Includes the decoded revert reason. Nothing was broadcast. |
+| `ESTIMATION_REVERTED` | Gas estimation reverted. Includes the node's message, which carries the revert reason when the node gives one. Nothing was broadcast. |
 | `FEE_ABOVE_CAP` | The current base fee plus tip is above the chain's fee cap (`MAX_FEE_GWEI_<chainId>`, 500 gwei by default). |
 | `RPC_UNAVAILABLE` | The RPC couldn't be reached for gas estimation or fee lookup, even after viem's retries. |
 | `INSUFFICIENT_FUNDS` | The node rejected the transaction because the balance can't cover value plus the maximum gas cost. |
@@ -304,7 +304,7 @@ The startup log lists each chain's settings in effect, without its RPC URLs.
 | Scenario | What happens | ADR |
 |---|---|---|
 | Many concurrent requests from one sender | Up to `maxInFlightPerSender` (default 16) are processed at once, each with its own nonce from the sender's pool. The rest wait as `queued`. | [0009], [0012] |
-| A sender's requests must be mined in order | Not guaranteed. Wait for the first to finish, or configure the chain with a cap of 1. | [0012] |
+| A sender's requests must be mined in order | Not guaranteed. Wait for the first to finish, or set `maxInFlightPerSender` to 1 in `src/config/defaults.ts`, which applies to every chain. | [0012] |
 | Client retries a POST after a timeout | The same `Idempotency-Key` returns the original request; no second transaction | [0010] |
 | Same key reused with a different body | `422` | [0010] |
 | Transaction would revert | Caught by gas estimation: `failed` with `ESTIMATION_REVERTED`, no gas spent | [0007] |
@@ -356,17 +356,36 @@ The startup log lists each chain's settings in effect, without its RPC URLs.
 
 ## What I'd improve with more time
 
-1. **Throughput per sender.** The spec's target is hundreds of transactions a second, with more than one per block on every network. On anvil the service does about 125 transfers/s with 5 senders. A sender's slot is only freed when the monitor sees the receipt on its 500 ms poll, so the cap and the poll interval set the pace. Next steps:
-   - watch new blocks (a WebSocket subscription, or `eth_getBlockReceipts` per block), so slots free on the next block instead of the next poll;
-   - make the in-flight cap configurable per chain;
-   - spread load across more senders.
-2. **More than one instance.** Split senders across instances, each owning its own keys, or move nonce ownership into Postgres with a lease per sender ([0001]).
+1. **Throughput on one instance.** The spec's target is hundreds of transactions a second, with more than one per block on every network. The service falls short of that once RPC calls take real time.
+   - **Where it stops.** The monitor checks each in-flight transaction with its own RPC calls, one after another, and a sender's slot is only freed when the monitor sees the receipt. So each chain tops out near 1 ÷ RPC latency, however many senders there are. Measured with a variant of the stress script that runs anvil with 2 s blocks and delays every RPC call:
+
+     | RPC delay | Senders | Transfers/s | Accepted → final, p50 |
+     |---|---|---|---|
+     | 0 ms | 5 | 39 | 5.6 s |
+     | 50 ms | 5 | 16 | 12.6 s |
+     | 100 ms | 5 | 9 | 22.9 s |
+     | 50 ms | 20 | 17 | 23.5 s |
+
+     The 122 transfers/s under [Localnet testing and results](#localnet-testing-and-results) is anvil mining each transaction on arrival and answering in under a millisecond.
+   - **Watch blocks, not transactions.** Fetch each new block's transactions once and match them to in-flight requests by sender and nonce. That's one call per block per chain, however many transactions are in flight. A different hash at our sender and nonce is also proof that the nonce was taken, which is safer than the current rule of two polls ([0009]).
+   - **Fewer RPC calls per request.** Read fees once per chain per block and share them across requests, and batch JSON-RPC calls.
+   - **The in-flight cap per chain.** L2 sequencers often accept more than geth's 16 pending transactions per account ([0012]).
+   - **Group SQLite commits.** Each request is committed about five times today, and better-sqlite3 blocks the event loop on every fsync. Buffering writes for a few milliseconds and committing once keeps the save-before-broadcast rule, as long as a broadcast waits for the commit that holds its attempt ([0003]). On a laptop this cut store time from 0.35 to 0.09 ms per transaction.
+2. **Thousands of transactions a second.** Ethereum mainnet only fits a few hundred simple transfers a second in total (block gas limit ÷ 12 s ÷ 21,000 gas), so thousands come from many chains, and from more than one process.
+   - **Split senders across instances.** Each instance owns a separate set of (chain, sender) pairs through a lease with a fencing token, so two instances never hand out nonces for the same sender ([0001]). A stateless API routes each request to the instance that owns its sender. The nonce pool, saving before broadcast and idempotency are all per sender, so they don't change.
+   - **Let the service choose the sender.** When a request names a pool of senders, or none, use the least-loaded one with funds. Each sender is a lane with a fixed rate, so this is the biggest single lever. A pool needs about target tx/s × (block time + detection time) ÷ in-flight cap senders: about 47 for 300 tx/s on Base with a cap of 16.
+   - **Sender balances.** Monitor them and top them up from a treasury, since a sender that runs dry fails every request.
+   - **Push results instead of polling** ([0002]). A client polling every 250 ms makes about 20 reads per transaction. A server-sent-events stream or a long-poll `GET` removes most of them, and batch endpoints cut the HTTP overhead of submitting and reading.
+   - **Backpressure.** A per-sender queue limit that returns `429` ([0012]).
+   - **Retention.** Archive final requests. At 1,000 tx/s that's about 86 million rows a day.
+   - **Signing off the main thread** if CPU becomes the limit: one signature takes about 0.18 ms here. KMS signing, if keys move there, has rate quotas to plan around ([0006]).
+   - **RPC capacity.** Dedicated nodes or enterprise RPC plans, and broadcasting straight to a chain's sequencer where it has a public endpoint.
 3. **Reorg safety.** A confirmation depth per chain, with a reorged transaction going back to `submitted` ([0004]).
 4. **Fewer failed requests.** Retry `nonce too high` inside the service instead of failing the request, and look up the receipt after a rejection, so load-balanced RPCs are safe too ([0008], [0009]).
 5. **A gap filler,** for a sender whose requests stop right after a rejection ([0009]).
 6. **Observability.** Metrics for queue depth, in-flight and stuck transactions, fee bumps and latency, and a `/health` that checks each chain's RPC.
 7. **Security.** API authentication and rate limits, KMS or HSM signing, and spending limits per key ([0006]).
-8. **API.** Webhooks or long-polling for results ([0002]), an expiry for idempotency keys ([0010]), and contract deployment and client-set gas. Batching through EIP-7702 is the path if batching is ever needed ([0011]).
+8. **API.** An expiry for idempotency keys ([0010]), contract deployment, and a client-set gas limit, which also saves an estimate per request. Batching through EIP-7702 is the path if batching is ever needed ([0011]).
 
 ## Observability, security and testing
 
@@ -417,10 +436,10 @@ Latest results, on a laptop against a local anvil node. They show how the servic
 | | Clean | Faults injected |
 |---|---|---|
 | Invariants | All passed | All passed |
-| Duration | 8.0 s (125 transfers/s) | 45.8 s (22 transfers/s) |
-| Accepted → mined, p50 / p95 | 3.9 s / 6.9 s | 8.4 s / 39.1 s |
-| Faults injected | None | 36 rejections, 55 lost replies, 75 blackholed sends |
-| Recovery | None | 30 requests resubmitted; 62 needed a replacement |
+| Duration | 8.2 s (122 transfers/s) | 31.7 s (32 transfers/s) |
+| Accepted → mined, p50 / p95 | 4.0 s / 7.1 s | 5.4 s / 24.3 s |
+| Faults injected | None | 58 rejections, 56 lost replies, 48 blackholed sends |
+| Recovery | None | 57 requests resubmitted; 19 needed a replacement |
 
 - **The clean phase's latency is queueing.** All 1,000 requests arrive at once, but at most 80 are in flight (5 senders × a cap of 16). A slot only frees when the monitor sees the receipt, on its 500 ms poll ([0012]).
 - **The faulted phase's long tail comes from blackholed transactions.** Each one holds up its sender until the monitor replaces it after `stuckAfterMs`, which the localnet scripts set to 5 s ([0008]).
