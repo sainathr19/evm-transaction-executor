@@ -2,7 +2,7 @@
 
 An HTTP service that sends transactions to EVM chains from accounts whose keys it holds. It handles nonces, gas, retries and receipts, so clients only have to say what to send.
 
-A client posts `{ network, sender, to, value, data }` and gets an id back immediately. The service then:
+A client posts `{ chainId, sender, to, value, data }` and gets an id back immediately. The service then:
 
 1. estimates gas and prices the fee,
 2. assigns a nonce, signs and broadcasts,
@@ -86,7 +86,7 @@ Requires an `Idempotency-Key` header: 1–255 printable ASCII characters. A UUID
 
 ```json
 {
-  "network": 84532,
+  "chainId": 84532,
   "sender": "0x…",
   "to": "0x…",
   "value": "1000000000000000",
@@ -96,7 +96,7 @@ Requires an `Idempotency-Key` header: 1–255 printable ASCII characters. A UUID
 
 | Field | Type | Notes |
 |---|---|---|
-| `network` | integer | Chain id. Must be a configured chain. |
+| `chainId` | integer | Must be a configured chain. The spec calls this field `network`; see [ADR 0005][0005]. |
 | `sender` | address | Must match one of the configured keys. |
 | `to` | address | Required. Contract deployment isn't supported. |
 | `value` | string | Wei, as a decimal string. JS numbers lose precision on large amounts. |
@@ -109,7 +109,7 @@ Requires an `Idempotency-Key` header: 1–255 printable ASCII characters. A UUID
 | Same key, different body | `422 IDEMPOTENCY_KEY_REUSED` |
 | Missing key | `400 IDEMPOTENCY_KEY_MISSING` |
 | Invalid body | `400 VALIDATION_ERROR` |
-| Chain not configured | `400 UNSUPPORTED_NETWORK`, listing the supported chain ids |
+| Chain not configured | `400 UNSUPPORTED_CHAIN`, listing the supported chain ids |
 | Sender not configured | `400 UNKNOWN_SENDER` |
 
 ### `GET /transactions/:id`
@@ -120,7 +120,7 @@ Returns the current state of a request, or `404 NOT_FOUND`. Track requests by th
 {
   "id": "…",
   "status": "succeeded",
-  "network": 84532,
+  "chainId": 84532,
   "sender": "0x…",
   "to": "0x…",
   "value": "1000000000000000",

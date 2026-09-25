@@ -9,7 +9,7 @@ The spec requires RPC endpoints to come from environment variables. Each chain a
 
 ## Decision
 
-- **The chain id is the only identifier.** The request's `network` field is the chain id, as an integer. The field keeps the spec's name so the API matches the spec's field list.
+- **The chain id is the only identifier.** Requests carry it in a `chainId` field, as an integer. The spec lists this field as `network`. We call it `chainId` because that's exactly what it holds, whereas `network` suggests a name such as `base-sepolia`.
 - **One typed file per chain** in `src/config/chains/`, keyed by the `id` of its viem chain definition. Shared defaults are merged with each chain's overrides. The filename is only for humans.
 
   ```ts
