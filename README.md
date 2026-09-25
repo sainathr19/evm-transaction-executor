@@ -322,7 +322,7 @@ The startup log lists each chain's settings in effect, without its RPC URLs.
 | Rolled-back nonce with later nonces in flight | The sender's next request takes that nonce first, which unblocks the later ones | [0009] |
 | Parallel broadcasts arrive out of order (`nonce too high`) | The request fails and its nonce goes back to the pool; the client resubmits | [0009] |
 | Nonce used outside the service, before our broadcast | The request fails with `nonce too low`. The pool resyncs from the chain, so the next request gets a fresh nonce. | [0009] |
-| Nonce used outside the service, after our broadcast | `failed` with `NONCE_TAKEN`; the pool is resynced from the chain | [0001], [0009] |
+| Nonce used outside the service, after our broadcast | `failed` with `NONCE_TAKEN` once the nonce has stayed used for `stuckAfterMs` with no receipt, since a lagging RPC can return the receipt late. The pool is resynced from the chain. | [0001], [0009] |
 | Crash between signing and broadcasting | The signed transaction was saved first, so after restart the monitor resends it | [0003] |
 | Restart with transactions in flight | Nonce pools are rebuilt from SQLite and the chain | [0009] |
 | RPC URL pointing at the wrong chain | The service refuses to start | [0005] |
@@ -369,7 +369,7 @@ The startup log lists each chain's settings in effect, without its RPC URLs.
      | 50 ms | 20 | 17 | 23.5 s |
 
      The 122 transfers/s under [Localnet testing and results](#localnet-testing-and-results) is anvil mining each transaction on arrival and answering in under a millisecond.
-   - **Watch blocks, not transactions.** Fetch each new block's transactions once and match them to in-flight requests by sender and nonce. That's one call per block per chain, however many transactions are in flight. A different hash at our sender and nonce is also proof that the nonce was taken, which is safer than the current rule of two polls ([0009]).
+   - **Watch blocks, not transactions.** Fetch each new block's transactions once and match them to in-flight requests by sender and nonce. That's one call per block per chain, however many transactions are in flight. A different hash at our sender and nonce is also proof that the nonce was taken, so `NONCE_TAKEN` wouldn't need its current wait of `stuckAfterMs` ([0009]).
    - **Fewer RPC calls per request.** Read fees once per chain per block and share them across requests, and batch JSON-RPC calls.
    - **The in-flight cap per chain.** L2 sequencers often accept more than geth's 16 pending transactions per account ([0012]).
    - **Group SQLite commits.** Each request is committed about five times today, and better-sqlite3 blocks the event loop on every fsync. Buffering writes for a few milliseconds and committing once keeps the save-before-broadcast rule, as long as a broadcast waits for the commit that holds its attempt ([0003]). On a laptop this cut store time from 0.35 to 0.09 ms per transaction.

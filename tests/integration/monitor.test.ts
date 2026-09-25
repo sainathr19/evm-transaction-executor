@@ -165,8 +165,8 @@ describe('stuck transactions', () => {
 })
 
 describe('nonce taken by another transaction', () => {
-  test('fails with NONCE_TAKEN on the second poll that sees it, and resyncs the pool', async () => {
-    const rt = await createRuntime(node.url)
+  test('fails with NONCE_TAKEN once the nonce has stayed used for stuckAfterMs, and resyncs the pool', async () => {
+    const rt = await createRuntime(node.url, { chain: { stuckAfterMs: STUCK_MS } })
     await rt.testClient.setAutomine(false)
     const tx = await submitted(rt)
 
@@ -187,9 +187,12 @@ describe('nonce taken by another transaction', () => {
     }
     await rt.testClient.mine({ blocks: 1 })
 
+    // Could be a lagging RPC that hasn't returned our receipt yet: polls in the first stuckAfterMs wait.
     await rt.monitor.tick()
-    expect(rt.store.get(tx.id)!.status).toBe('submitted') // could be receipt lag: wait one more poll
+    await rt.monitor.tick()
+    expect(rt.store.get(tx.id)!.status).toBe('submitted')
 
+    await sleep(STUCK_MS)
     await rt.monitor.tick()
     expect(rt.store.get(tx.id)).toMatchObject({ status: 'failed', failure: { code: 'NONCE_TAKEN' } })
     expect(rt.senders.get(ANVIL, ADDRESS_0).pool.top).toBe(2) // resynced past both outside nonces

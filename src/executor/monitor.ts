@@ -23,8 +23,6 @@ import type { Worker } from './worker'
 export type MonitorOptions = {
   broadcastSends: number
   broadcastDelayMs: number
-  /** Polls in a row that must see the nonce used by another tx before NONCE_TAKEN (ADR 0009). */
-  nonceTakenPolls: number
 }
 
 export type MonitorDeps = {
@@ -36,7 +34,7 @@ export type MonitorDeps = {
   logger: Logger
 }
 
-const DEFAULTS: MonitorOptions = { broadcastSends: 3, broadcastDelayMs: 250, nonceTakenPolls: 2 }
+const DEFAULTS: MonitorOptions = { broadcastSends: 3, broadcastDelayMs: 250 }
 
 /** One per chain. Every pollIntervalMs it checks each submitted request (ADR 0008, layer 4). */
 export class Monitor {
@@ -47,8 +45,8 @@ export class Monitor {
   readonly #log: Logger
   /** When each request last had an attempt sent or resent. "Stuck" is measured from here. */
   readonly #lastSentAt = new Map<TxId, number>()
-  /** How many polls in a row have seen each request's nonce used by another transaction. */
-  readonly #nonceTakenPolls = new Map<TxId, number>()
+  /** When polls began seeing each request's nonce used by another transaction, without a break. */
+  readonly #nonceTakenSince = new Map<TxId, number>()
   readonly #stop = new AbortController()
   #loop: Promise<void> | undefined
 
@@ -112,20 +110,21 @@ export class Monitor {
       }
     }
 
-    // 2. The nonce was used by another transaction, so ours can never be mined. Needs two polls
-    // in a row: a load-balanced RPC can report the new nonce before it can return the receipt.
+    // 2. The nonce was used by another transaction, so ours can never be mined. A lagging or
+    // load-balanced RPC can report the new nonce before it can return our receipt, so every poll
+    // must see it for stuckAfterMs before the request fails (ADR 0009).
     const confirmed = await confirmedNonce(tx.sender)
     if (tx.nonce < confirmed) {
-      const polls = (this.#nonceTakenPolls.get(tx.id) ?? 0) + 1
-      this.#nonceTakenPolls.set(tx.id, polls)
-      if (polls < this.#options.nonceTakenPolls) return
+      const since = this.#nonceTakenSince.get(tx.id)
+      if (since === undefined) this.#nonceTakenSince.set(tx.id, Date.now())
+      if (since === undefined || Date.now() - since < chain.config.stuckAfterMs) return
       this.#deps.senders.get(tx.chainId, tx.sender).pool.reset(confirmed)
       if (store.markFailed(tx.id, { code: 'NONCE_TAKEN', nonce: tx.nonce })) {
         this.#finished(tx, { status: 'failed', code: 'NONCE_TAKEN' })
       }
       return
     }
-    this.#nonceTakenPolls.delete(tx.id)
+    this.#nonceTakenSince.delete(tx.id)
 
     // 3. Stuck: replace it with higher fees, or once that's not possible, resend it unchanged.
     // A broadcast transaction is never failed because time ran out (ADR 0008).
@@ -167,7 +166,7 @@ export class Monitor {
 
   #finished(tx: Transaction, fields: Record<string, unknown>): void {
     this.#lastSentAt.delete(tx.id)
-    this.#nonceTakenPolls.delete(tx.id)
+    this.#nonceTakenSince.delete(tx.id)
     this.#log.info({ txId: tx.id, ...fields }, 'final')
     this.#deps.worker.release(tx)
   }

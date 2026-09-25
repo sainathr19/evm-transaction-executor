@@ -40,11 +40,11 @@ Failures are handled at four layers.
 The monitor runs one loop per chain, every `pollIntervalMs`. For each `submitted` request:
 
 1. **Look for a receipt for every attempt**, not just the latest, because the original can be mined after a replacement was sent. If one exists, the request becomes `succeeded` or `reverted`.
-2. **If there's no receipt and the latest attempt is older than `stuckAfterMs`:**
+2. **If there's no receipt, check whether another transaction has taken the nonce** ([ADR 0009](0009-nonce-pool.md)). Once the chain's confirmed nonce has been past ours for `stuckAfterMs` with still no receipt, the request becomes `failed` with `NONCE_TAKEN`. While the nonce looks taken, the transaction isn't replaced or resent.
+3. **If there's no receipt and the latest attempt is older than `stuckAfterMs`:**
    - If bumps remain and the new fee stays under the cap, sign a replacement with the same nonce. Both fee fields go up by `bumpPercent` (rounded up), or to the current market fee if that's higher. Save the replacement, then broadcast it.
    - Otherwise, resend the latest attempt unchanged. This also covers a transaction that was dropped from a mempool.
    - If a node rejects a replacement, for example with `replacement transaction underpriced`, nothing changes. The earlier attempt is still valid, the bump counts toward `maxBumps`, and the next bump uses a higher fee.
-3. **Check whether another transaction has taken the nonce** ([ADR 0009](0009-nonce-pool.md)).
 
 **A broadcast transaction is never marked `failed` because time ran out.** It can still be mined, so it stays `submitted` until a receipt appears or another transaction uses its nonce. When the bumps run out, the service stops paying more but keeps watching, and the logs show the transaction as stuck.
 

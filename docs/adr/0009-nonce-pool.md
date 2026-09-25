@@ -70,8 +70,10 @@ So a pool that is out of sync heals itself on the next rejection, and no decisio
 A held nonce never goes back to the pool. The request ends when the monitor sees one of two things:
 
 - **A receipt for any of its attempts.** The request becomes `succeeded` or `reverted`.
-- **The chain's confirmed nonce has moved past the request's nonce, with no receipt for any attempt, on two polls in a row.** The request becomes `failed` with `NONCE_TAKEN`, and the pool is `reset`.
-  - The second poll is there because a load-balanced RPC can report the new nonce before it can return the receipt.
+- **The chain's confirmed nonce has moved past the request's nonce, with no receipt for any attempt, for at least `stuckAfterMs`.** The request becomes `failed` with `NONCE_TAKEN`, and the pool is `reset`.
+  - The wait is there because a lagging or load-balanced RPC can report the new nonce before it can return our receipt. Every poll during the wait must see the nonce used; a poll that doesn't starts the wait again.
+  - Failing too early is the costly mistake. The request would show `failed` although it ran, and a client that resubmits it would execute it twice. Waiting too long only delays the answer.
+  - An earlier version failed the request on the second poll in a row that saw the nonce used. On a chain with 2 s blocks that's about one block, which a lagging node can exceed.
   - Under [ADR 0001](0001-single-instance-exclusive-keys.md), this only happens if something outside the service used the key.
 
 ### Gaps
@@ -92,7 +94,7 @@ The pool isn't saved. At startup it's rebuilt for each sender from SQLite and th
 
 | Setting | Default | Basis |
 |---|---|---|
-| Polls before `NONCE_TAKEN` | 2 | Our choice |
+| Wait before `NONCE_TAKEN` | `stuckAfterMs`: 60 s by default, set per chain | Our choice. It's already about 5 blocks on each chain, which gives a lagging RPC time to return the receipt. |
 
 ## Alternatives considered
 
