@@ -10,7 +10,7 @@ A client posts `{ chainId, sender, to, value, data }` and gets an id back immedi
 
 The client polls with the id to get the result.
 
-> **Status:** the design below is agreed, and implementation has started. So far: tooling, per-chain config, env parsing and startup checks, the signer registry, the SQLite store, the nonce pool, logging and the test harness. The API, worker and monitor aren't built yet. Some details will be settled during implementation; see [Open items](#open-items).
+> **Status:** the design below is agreed, and implementation has started. So far: tooling, per-chain config, env parsing and startup checks, the signer registry, the SQLite store, the nonce pool, gas and fee pricing, logging and the test harness. The API, worker and monitor aren't built yet. Some details will be settled during implementation; see [Open items](#open-items).
 
 ## Development
 
