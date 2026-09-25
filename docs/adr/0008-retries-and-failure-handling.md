@@ -32,7 +32,8 @@ Retries happen at four layers.
   - Accepted, or `already known`: the request becomes `submitted`.
   - Any send unanswered: the request becomes `submitted`, keeps its nonce, and the monitor resolves it.
   - Every send clearly rejected: handled as described in [ADR 0009](0009-nonce-pool.md). The nonce is rolled back or reset, and the request is retried or marked `failed`.
-- **Matching node errors:** viem maps common node messages to typed errors, such as `InsufficientFundsError`, `NonceTooLowError` and `NonceTooHighError`. We match `already known`, and variants like `known transaction`, ourselves. Node software words errors differently, so this is best effort. An unrecognised error becomes `BROADCAST_REJECTED` and keeps the node's message.
+- **What counts as an answer:** only a JSON-RPC error response from the node. Timeouts, dropped connections and HTTP errors, including `429` and `5xx`, count as no answer. That's the safe side: the nonce is kept and the monitor resolves the transaction.
+- **Matching node errors:** we classify the node's error message ourselves, using case-insensitive patterns for `already known` (anvil says `transaction already imported`), `nonce too low`, `nonce too high`, `insufficient funds` and `underpriced`. We don't use viem's typed errors for this. viem's `NonceTooLowError` also matches `already known`, so using it would treat an accepted transaction as a rejection. Node software words errors differently, so this is best effort. An unrecognised error becomes `BROADCAST_REJECTED` and keeps the node's message.
 
 ### 4. After broadcast: the monitor
 

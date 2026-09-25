@@ -13,7 +13,8 @@ The spec provides private keys through environment variables. The keys are the m
 - **Startup checks:** a malformed or duplicate key, or no keys at all, stops startup.
 - **Keeping keys out of reach:**
   - The keys are read once and then deleted from `process.env`. Only the account objects stay in memory.
-  - The logger redacts anything that looks like a key, and errors never include key material.
+  - Keys are never passed to the logger. Only the signer registry sees them, and config objects that hold them are never logged. As a backstop, the logger redacts fields named like keys (`privateKey`, `SIGNER_PRIVATE_KEYS`). It can't redact by pattern: a private key and a transaction hash look the same (0x plus 64 hex characters), so pattern redaction would also wipe every hash from the logs.
+  - Errors never include key material.
   - The API and `/health` only ever show addresses.
 - **Files:** `.env` is gitignored, and `.env.example` contains placeholders only. anvil's well-known dev keys are fine locally and must never be used on a real network.
 - **Signer registry:** the rest of the code only sees a mapping from address to viem `Account`. viem's `toAccount` lets any signer present that interface, so moving to production only changes how the registry is built.
