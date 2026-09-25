@@ -280,14 +280,8 @@ function toAttempt(row: AttemptRow): Attempt {
 type StoredFees =
   { type: 'legacy'; gasPrice: string } | { type: 'eip1559'; maxFeePerGas: string; maxPriorityFeePerGas: string }
 
-type StoredReceipt = {
-  transactionHash: Hash
-  blockNumber: string
-  blockHash: Hash
-  gasUsed: string
-  effectiveGasPrice: string
-  status: Receipt['status']
-}
+type ReceiptAmount = 'blockNumber' | 'gasUsed' | 'cumulativeGasUsed' | 'effectiveGasPrice'
+type StoredReceipt = Omit<Receipt, ReceiptAmount> & Record<ReceiptAmount, string>
 
 type StoredFailure =
   | Exclude<TxFailure, { code: 'FEE_ABOVE_CAP' | 'NONCE_TAKEN' }>
@@ -308,12 +302,11 @@ function parseFees(json: string): Fees {
 function parseReceipt(json: string): Receipt {
   const receipt = JSON.parse(json) as StoredReceipt
   return {
-    transactionHash: receipt.transactionHash,
+    ...receipt,
     blockNumber: BigInt(receipt.blockNumber),
-    blockHash: receipt.blockHash,
     gasUsed: BigInt(receipt.gasUsed),
+    cumulativeGasUsed: BigInt(receipt.cumulativeGasUsed),
     effectiveGasPrice: BigInt(receipt.effectiveGasPrice),
-    status: receipt.status,
   }
 }
 

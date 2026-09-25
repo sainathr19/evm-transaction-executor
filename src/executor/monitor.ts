@@ -1,5 +1,5 @@
 import { setTimeout as sleep } from 'node:timers/promises'
-import { type Address, type Hash, type PublicClient, TransactionReceiptNotFoundError } from 'viem'
+import { type Address, getAddress, type Hash, type PublicClient, TransactionReceiptNotFoundError } from 'viem'
 import type { Signers } from '../config/signers'
 import type { Logger } from '../logger'
 import type { Store } from '../store/store'
@@ -178,11 +178,24 @@ async function findReceipt(read: PublicClient, hash: Hash): Promise<Receipt | nu
     const receipt = await read.getTransactionReceipt({ hash })
     return {
       transactionHash: receipt.transactionHash,
+      transactionIndex: receipt.transactionIndex,
       blockNumber: receipt.blockNumber,
       blockHash: receipt.blockHash,
+      from: getAddress(receipt.from),
+      to: receipt.to ? getAddress(receipt.to) : null,
+      contractAddress: receipt.contractAddress ? getAddress(receipt.contractAddress) : null,
       gasUsed: receipt.gasUsed,
+      cumulativeGasUsed: receipt.cumulativeGasUsed,
       effectiveGasPrice: receipt.effectiveGasPrice,
       status: receipt.status,
+      type: receipt.type,
+      logsBloom: receipt.logsBloom,
+      logs: receipt.logs.map((log) => ({
+        address: getAddress(log.address),
+        topics: [...log.topics],
+        data: log.data,
+        logIndex: log.logIndex,
+      })),
     }
   } catch (error) {
     if (error instanceof TransactionReceiptNotFoundError) return null

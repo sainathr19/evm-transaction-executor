@@ -1,5 +1,5 @@
 import { setTimeout as sleep } from 'node:timers/promises'
-import { createWalletClient, http, parseGwei, type Address } from 'viem'
+import { createWalletClient, getAddress, http, parseGwei, type Address } from 'viem'
 import { privateKeyToAccount } from 'viem/accounts'
 import { anvil } from 'viem/chains'
 import { afterEach, beforeEach, describe, expect, test } from 'vitest'
@@ -43,6 +43,32 @@ describe('receipts', () => {
 
     await rt.worker.idle()
     expect(rt.store.get(second.id)!.status).toBe('submitted')
+  })
+
+  test('records the full receipt, including the logs the call emitted', async () => {
+    const rt = await createRuntime(node.url)
+    // Stores 42 in memory, then LOG1(offset 0, size 32, topic 7).
+    const emitter = getAddress('0x00000000000000000000000000000000000e1017')
+    await rt.testClient.setCode({ address: emitter, bytecode: '0x602a600052600760206000a100' })
+    const tx = await submitted(rt, { to: emitter })
+
+    await rt.monitor.tick()
+    const word = (value: number) => `0x${value.toString(16).padStart(64, '0')}`
+    const mined = rt.store.get(tx.id)
+    expect(mined).toMatchObject({
+      status: 'succeeded',
+      receipt: {
+        from: ADDRESS_0,
+        to: emitter,
+        contractAddress: null,
+        transactionIndex: 0,
+        type: 'eip1559',
+        logs: [{ address: emitter, topics: [word(7)], data: word(42), logIndex: 0 }],
+      },
+    })
+    const receipt = mined?.status === 'succeeded' ? mined.receipt : undefined
+    expect(receipt?.cumulativeGasUsed).toBe(receipt?.gasUsed) // the only transaction in its block
+    expect(receipt?.logsBloom).toMatch(/^0x[0-9a-f]{512}$/)
   })
 
   test('marks a request reverted when its receipt says so', async () => {

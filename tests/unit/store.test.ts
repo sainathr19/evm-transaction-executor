@@ -16,11 +16,19 @@ const RAW: Hex = '0x02f86b'
 const EIP1559: Fees = { type: 'eip1559', maxFeePerGas: 30_000_000_000n, maxPriorityFeePerGas: 1_000_000_000n }
 const RECEIPT: Receipt = {
   transactionHash: HASH_B,
+  transactionIndex: 3,
   blockNumber: 12n,
   blockHash: HASH_A,
+  from: ADDRESS_0,
+  to: ADDRESS_1,
+  contractAddress: null,
   gasUsed: 21_000n,
+  cumulativeGasUsed: 84_000n,
   effectiveGasPrice: 3_000_000_000n,
   status: 'success',
+  type: 'eip1559',
+  logsBloom: `0x${'0'.repeat(512)}`,
+  logs: [{ address: ADDRESS_1, topics: [HASH_A, HASH_B], data: '0x2a', logIndex: 7 }],
 }
 
 function request(overrides: Partial<NewRequest> = {}): NewRequest {

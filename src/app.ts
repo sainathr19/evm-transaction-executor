@@ -82,14 +82,9 @@ export type ApiTransaction = {
 type ApiFees =
   { type: 'eip1559'; maxFeePerGas: string; maxPriorityFeePerGas: string } | { type: 'legacy'; gasPrice: string }
 
-type ApiReceipt = {
-  transactionHash: Hash
-  blockNumber: string
-  blockHash: Hash
-  gasUsed: string
-  effectiveGasPrice: string
-  status: Receipt['status']
-}
+/** The full receipt, with its amounts as decimal strings. */
+type ReceiptAmount = 'blockNumber' | 'gasUsed' | 'cumulativeGasUsed' | 'effectiveGasPrice'
+type ApiReceipt = Omit<Receipt, ReceiptAmount> & Record<ReceiptAmount, string>
 
 /** The failure's own details, plus a one-line explanation. */
 type ApiFailure = { code: FailureCode; message: string; [detail: string]: unknown }
@@ -263,12 +258,11 @@ function feesJson(fees: Fees): ApiFees {
 
 function receiptJson(receipt: Receipt): ApiReceipt {
   return {
-    transactionHash: receipt.transactionHash,
+    ...receipt,
     blockNumber: receipt.blockNumber.toString(),
-    blockHash: receipt.blockHash,
     gasUsed: receipt.gasUsed.toString(),
+    cumulativeGasUsed: receipt.cumulativeGasUsed.toString(),
     effectiveGasPrice: receipt.effectiveGasPrice.toString(),
-    status: receipt.status,
   }
 }
 

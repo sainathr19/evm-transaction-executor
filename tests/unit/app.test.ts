@@ -199,11 +199,19 @@ describe('GET /transactions/:id', () => {
     store.markSubmitted(tx.id, HASH_A)
     store.markMined(tx.id, {
       transactionHash: HASH_A,
+      transactionIndex: 3,
       blockNumber: 12n,
       blockHash: HASH_B,
+      from: ADDRESS_0,
+      to: ADDRESS_1,
+      contractAddress: null,
       gasUsed: 21_000n,
+      cumulativeGasUsed: 84_000n,
       effectiveGasPrice: parseGwei('2'),
       status: 'success',
+      type: 'eip1559',
+      logsBloom: `0x${'0'.repeat(512)}`,
+      logs: [{ address: ADDRESS_1, topics: [HASH_B], data: '0x2a', logIndex: 7 }],
     })
 
     const json = await resultOf(await get(tx.id))
@@ -221,11 +229,19 @@ describe('GET /transactions/:id', () => {
       ],
       receipt: {
         transactionHash: HASH_A,
+        transactionIndex: 3,
         blockNumber: '12',
         blockHash: HASH_B,
+        from: ADDRESS_0,
+        to: ADDRESS_1,
+        contractAddress: null,
         gasUsed: '21000',
+        cumulativeGasUsed: '84000',
         effectiveGasPrice: '2000000000',
         status: 'success',
+        type: 'eip1559',
+        logsBloom: `0x${'0'.repeat(512)}`,
+        logs: [{ address: ADDRESS_1, topics: [HASH_B], data: '0x2a', logIndex: 7 }],
       },
       failure: null,
     })
