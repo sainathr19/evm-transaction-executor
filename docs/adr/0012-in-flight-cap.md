@@ -37,7 +37,7 @@ Clients might also expect one sender's requests to be mined in the order they we
 ## Alternatives considered
 
 - **No cap.** Rejected. Unlimited transactions could pile up behind a stuck one, and some might be evicted from the mempool.
-- **A cap of 1 on every chain.** Rejected as the default, because it allows only about one transaction per block per sender. It's still available through config when strict order matters more than throughput.
+- **A cap of 1 on every chain.** Rejected as the default, because it allows only about one transaction per block per sender. It's still available by setting the default in `src/config/defaults.ts` to 1, which applies to every chain, when strict order matters more than throughput.
 - **Guaranteed arrival order with a cap above 1.** Rejected. Nonce assignment and broadcasting would have to go through one serial step, and a failed request would hold up every request after it. Order isn't a requirement.
 - **Rejecting requests over the cap with `429`.** Rejected. Clients would need their own retry logic, and queueing is simpler for them.
 

@@ -26,7 +26,7 @@ The default buffer of 20% is **our practical choice. There's no standard value.*
 - **What it doesn't cover:** that same change on smaller calls, and contracts whose gas use grows with state, such as loops over growing arrays.
 - **Tuning:** compare `gasUsed` on stored receipts with the limit we set.
 
-If the estimate reverts, the request becomes `failed` with `ESTIMATION_REVERTED` and the decoded revert reason, and nothing is broadcast.
+If the estimate reverts, the request becomes `failed` with `ESTIMATION_REVERTED` and the node's message, which carries the revert reason when the node gives one. Nothing is broadcast.
 
 ### Fee type
 
