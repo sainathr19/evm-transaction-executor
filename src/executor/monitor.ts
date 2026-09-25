@@ -145,7 +145,7 @@ export class Monitor {
   async #replace(tx: SubmittedTx, previous: Fees): Promise<boolean> {
     const { store, chain, signers } = this.#deps
     const { gas } = chain.config
-    const market = priceFees(await readMarketFees(chain.rpc.read, gas.type), gas)
+    const market = priceFees(await readMarketFees(chain.rpc.read), gas)
     const bumped = bumpFees(previous, market.ok ? market.value : null, gas)
     if (!bumped.ok) return false
 

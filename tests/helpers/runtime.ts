@@ -1,8 +1,7 @@
 import { randomUUID } from 'node:crypto'
 import { createTestClient, http, parseGwei, type PublicClient, type TestClient } from 'viem'
 import { anvil } from 'viem/chains'
-import { withDefaults } from '../../src/config/defaults'
-import type { EnabledChain } from '../../src/config/load'
+import { DEFAULTS } from '../../src/config/defaults'
 import { buildSigners } from '../../src/config/signers'
 import type { ChainConfig, GasConfig } from '../../src/config/types'
 import { Monitor } from '../../src/executor/monitor'
@@ -21,7 +20,7 @@ import { ADDRESS_0, ADDRESS_1, KEY_0, KEY_1 } from './keys'
 export const ANVIL = chainId(anvil.id)
 
 export type RuntimeOptions = {
-  chain?: Partial<Omit<ChainConfig, 'chain' | 'gas'>> & { gas?: Partial<GasConfig> }
+  chain?: Partial<Omit<ChainConfig, 'chainId' | 'rpcUrls' | 'gas'>> & { gas?: Partial<GasConfig> }
   worker?: Partial<WorkerOptions>
   /** Replaces the broadcast senders, e.g. to simulate a node that times out. */
   wrapSenders?: (real: Sender[]) => Sender[]
@@ -46,12 +45,13 @@ export type TestRuntime = {
 
 /** Everything the worker needs, against an anvil node at `url`, with short test timings. */
 export async function createRuntime(url: string, options: RuntimeOptions = {}): Promise<TestRuntime> {
-  const base = withDefaults({ chain: anvil, pollIntervalMs: 50, gas: { maxFeePerGasWei: parseGwei('100') } })
-  const config: EnabledChain = {
-    ...base,
-    ...options.chain,
-    gas: { ...base.gas, ...options.chain?.gas },
+  const config: ChainConfig = {
+    chainId: ANVIL,
     rpcUrls: [url],
+    ...DEFAULTS,
+    pollIntervalMs: 50,
+    ...options.chain,
+    gas: { ...DEFAULTS.gas, maxFeePerGasWei: parseGwei('100'), ...options.chain?.gas },
   }
   const rpc = createChainRpc(config)
   const chain: RuntimeChain = {

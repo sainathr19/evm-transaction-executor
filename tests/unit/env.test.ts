@@ -1,5 +1,7 @@
+import { parseGwei } from 'viem'
 import { describe, expect, test } from 'vitest'
 import { parseEnv } from '../../src/config/env'
+import { chainId } from '../../src/types'
 import { expectConfigError } from '../helpers/errors'
 import { KEY_0, KEY_1 } from '../helpers/keys'
 
@@ -7,12 +9,31 @@ const BASE = { RPC_URL_31337: 'http://127.0.0.1:8545', SIGNER_PRIVATE_KEYS: KEY_
 
 test('reads RPC URLs per chain id, in fallback order, ignoring blanks', () => {
   const env = parseEnv({ ...BASE, RPC_URL_84532: ' https://a.example , https://b.example ,' })
-  expect(env.rpcUrls).toEqual(
+  expect(env.chains).toEqual(
     new Map([
-      [31337, ['http://127.0.0.1:8545']],
-      [84532, ['https://a.example', 'https://b.example']],
+      [31337, { rpcUrls: ['http://127.0.0.1:8545'] }],
+      [84532, { rpcUrls: ['https://a.example', 'https://b.example'] }],
     ]),
   )
+})
+
+test('reads optional per-chain settings', () => {
+  const env = parseEnv({
+    ...BASE,
+    RPC_URL_84532: 'https://a.example',
+    POLL_INTERVAL_MS_31337: '500',
+    STUCK_AFTER_MS_31337: '5000',
+    MAX_FEE_GWEI_84532: '0.05',
+  })
+  expect(env.chains.get(chainId(31337))).toEqual({
+    rpcUrls: ['http://127.0.0.1:8545'],
+    pollIntervalMs: 500,
+    stuckAfterMs: 5_000,
+  })
+  expect(env.chains.get(chainId(84532))).toEqual({
+    rpcUrls: ['https://a.example'],
+    maxFeePerGasWei: parseGwei('0.05'),
+  })
 })
 
 test('reads a comma-separated list of keys', () => {
@@ -38,7 +59,7 @@ describe('refuses to start', () => {
     expect(expectConfigError(() => parseEnv({ SIGNER_PRIVATE_KEYS: KEY_0 })).message).toContain('RPC_URL_<chainId>')
   })
 
-  test.each(['RPC_URL_BASE', 'RPC_URL_0', 'RPC_URL_007'])('when %s is not a chain id', (name) => {
+  test.each(['RPC_URL_BASE', 'RPC_URL_0', 'RPC_URL_007', 'MAX_FEE_GWEI_BASE'])('when %s is not a chain id', (name) => {
     expect(expectConfigError(() => parseEnv({ ...BASE, [name]: 'https://a.example' })).message).toContain(name)
   })
 
@@ -49,6 +70,28 @@ describe('refuses to start', () => {
     const error = expectConfigError(() => parseEnv({ ...BASE, RPC_URL_1: `https://ok.example,${url}` }))
     expect(error.message).toContain('RPC_URL_1 entry 2')
     expect(error.message).not.toContain('secret-api-key')
+  })
+
+  test.each(['POLL_INTERVAL_MS_1', 'STUCK_AFTER_MS_1', 'MAX_FEE_GWEI_1'])(
+    'when %s is set for a chain with no RPC URL',
+    (name) => {
+      const error = expectConfigError(() => parseEnv({ ...BASE, [name]: '10' }))
+      expect(error.message).toContain(name)
+      expect(error.message).toContain('RPC_URL_1')
+    },
+  )
+
+  test.each([
+    ['POLL_INTERVAL_MS_31337', '0'],
+    ['POLL_INTERVAL_MS_31337', '1.5'],
+    ['STUCK_AFTER_MS_31337', 'abc'],
+    ['STUCK_AFTER_MS_31337', ''],
+    ['MAX_FEE_GWEI_31337', '0'],
+    ['MAX_FEE_GWEI_31337', '-1'],
+    ['MAX_FEE_GWEI_31337', '1e3'],
+    ['MAX_FEE_GWEI_31337', '0.0000000001'], // below 1 wei
+  ])('when %s=%s', (name, value) => {
+    expect(expectConfigError(() => parseEnv({ ...BASE, [name]: value })).message).toContain(name)
   })
 
   test('without SIGNER_PRIVATE_KEYS', () => {

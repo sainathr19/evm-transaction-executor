@@ -63,17 +63,11 @@ export function bumpFees(previous: Fees, market: Fees | null, gas: GasConfig): R
   return ceiling > gas.maxFeePerGasWei ? aboveCap(gas) : ok(bumped)
 }
 
-export async function readMarketFees(client: PublicClient, type: GasConfig['type']): Promise<MarketFees> {
-  if (type === 'legacy') return { type: 'legacy', gasPrice: await client.getGasPrice() }
-
-  const [block, tip] = await Promise.all([
-    client.getBlock({ blockTag: 'latest' }),
-    client.estimateMaxPriorityFeePerGas(),
-  ])
-  if (block.baseFeePerGas === null) {
-    throw new Error(`chain ${client.chain?.id} has no base fee: set gas.type to 'legacy' in its config file`)
-  }
-  return { type: 'eip1559', baseFee: block.baseFeePerGas, tip }
+/** EIP-1559 fees when the latest block has a base fee, otherwise eth_gasPrice (ADR 0007). */
+export async function readMarketFees(client: PublicClient): Promise<MarketFees> {
+  const block = await client.getBlock({ blockTag: 'latest' })
+  if (block.baseFeePerGas === null) return { type: 'legacy', gasPrice: await client.getGasPrice() }
+  return { type: 'eip1559', baseFee: block.baseFeePerGas, tip: await client.estimateMaxPriorityFeePerGas() }
 }
 
 export async function estimateGasLimit(client: PublicClient, tx: GasRequest, bufferPercent: number): Promise<bigint> {

@@ -14,7 +14,15 @@ import type { ChainId } from './types'
 const config = loadConfigOrExit()
 const logger = createLogger(config.logLevel)
 await verifyChainsOrExit(config)
-logger.info({ chains: [...config.chains.keys()], senders: [...config.signers.keys()] }, 'configuration loaded')
+// The settings in effect, since most come from defaults. RPC URLs are left out: they often embed API keys.
+const chainSettings = [...config.chains.values()].map((chain) => ({
+  chainId: chain.chainId,
+  rpcUrls: chain.rpcUrls.length,
+  pollIntervalMs: chain.pollIntervalMs,
+  stuckAfterMs: chain.stuckAfterMs,
+  maxFeePerGasWei: chain.gas.maxFeePerGasWei.toString(),
+}))
+logger.info({ chains: chainSettings, senders: [...config.signers.keys()] }, 'configuration loaded')
 
 const db = openDb(config.dbPath)
 const store = new Store(db)

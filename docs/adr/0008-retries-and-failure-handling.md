@@ -59,9 +59,9 @@ Two choices within the monitor:
 |---|---|---|
 | RPC retries | 3 retries, backoff from 150 ms, 10 s timeout | viem's defaults, kept |
 | Sends per broadcast | 3 | Our choice |
-| `stuckAfterMs` (per chain) | About 5 blocks' worth: 60 s on Ethereum mainnet, 10 s on Base | Our choice |
-| `bumpPercent` (per chain) | 12.5% | geth rejects a replacement unless both fee fields rise by at least 10%. That's the default of its `--txpool.pricebump` setting, and a node can require more. The extra 2.5 points are our margin for rounding and for nodes that require more. |
-| `maxBumps` (per chain) | 5 | Our choice. Five bumps compound to about 1.8× the first fee, or more if the market fee rose faster. The fee cap limits it either way. |
+| `stuckAfterMs` | 60 s, about 5 blocks on Ethereum mainnet. `STUCK_AFTER_MS_<chainId>` sets it per chain, such as 10 s on Base. | Our choice |
+| `bumpPercent` | 12.5% | geth rejects a replacement unless both fee fields rise by at least 10%. That's the default of its `--txpool.pricebump` setting, and a node can require more. The extra 2.5 points are our margin for rounding and for nodes that require more. |
+| `maxBumps` | 5 | Our choice. Five bumps compound to about 1.8× the first fee, or more if the market fee rose faster. The fee cap limits it either way. |
 
 ## Alternatives considered
 

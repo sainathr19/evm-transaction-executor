@@ -16,7 +16,7 @@ Clients might also expect one sender's requests to be mined in the order they we
 
 ### Cap
 
-- Each (chain, sender) can have at most `maxInFlightPerSender` requests in progress. The default is 16, and it's set per chain.
+- Each (chain, sender) can have at most `maxInFlightPerSender` requests in progress. The default is 16, the same on every chain.
 - A request takes a slot when the worker starts on it, before gas estimation. It keeps the slot until it reaches a final status (`succeeded`, `reverted` or `failed`). This includes time spent on broadcast retries (`nonce too high`, `nonce too low`).
 - Requests over the cap stay `queued` and are picked up as slots free up. POST isn't affected and still returns `202`.
 
@@ -32,7 +32,7 @@ Clients might also expect one sender's requests to be mined in the order they we
 
 | Setting | Default | Basis |
 |---|---|---|
-| `maxInFlightPerSender` (per chain) | 16 | Matches geth's default of 16 guaranteed slots per account (`--txpool.accountslots`). Other nodes and L2 sequencers have their own limits; matching geth is our choice. |
+| `maxInFlightPerSender` | 16 | Matches geth's default of 16 guaranteed slots per account (`--txpool.accountslots`). Other nodes and L2 sequencers have their own limits; matching geth is our choice. |
 
 ## Alternatives considered
 

@@ -22,6 +22,7 @@ beforeAll(async () => {
     env: {
       PATH: process.env.PATH,
       RPC_URL_31337: node.url,
+      POLL_INTERVAL_MS_31337: '500',
       SIGNER_PRIVATE_KEYS: KEY_0,
       PORT: new URL(baseUrl).port,
       DB_PATH: join(dataDir, 'executor.db'),
