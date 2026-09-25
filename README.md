@@ -38,6 +38,8 @@ npm run format:check
 npm test
 ```
 
+GitHub Actions runs each of the four checks as its own workflow, on every pull request to `main` and every push to `main` ([`.github/workflows/`](.github/workflows/)). The test workflow installs anvil itself.
+
 `npm run format` fixes formatting. TypeScript is pinned to 6.0 because typescript-eslint's type-aware rules don't support TypeScript 7 yet.
 
 To run the service, copy `.env.example` to `.env`, fill it in, then run:
