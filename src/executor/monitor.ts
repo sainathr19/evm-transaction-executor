@@ -101,7 +101,8 @@ export class Monitor {
     for (const attempt of live) {
       const receipt = await findReceipt(chain.rpc.read, attempt.hash)
       if (receipt) {
-        if (store.markMined(tx.id, receipt)) this.#finished(tx, { status: receipt.status, hash: receipt.transactionHash })
+        if (store.markMined(tx.id, receipt))
+          this.#finished(tx, { status: receipt.status, hash: receipt.transactionHash })
         return
       }
     }

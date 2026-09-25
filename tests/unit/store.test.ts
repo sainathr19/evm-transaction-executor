@@ -8,9 +8,9 @@ import { Store, type NewRequest } from '../../src/store/store'
 import type { Fees, Receipt } from '../../src/types'
 import { ADDRESS_0, ADDRESS_1 } from '../helpers/keys'
 
-const HASH_A = `0x${'a'.repeat(64)}` as Hash
-const HASH_B = `0x${'b'.repeat(64)}` as Hash
-const RAW = '0x02f86b' as Hex
+const HASH_A: Hash = `0x${'a'.repeat(64)}`
+const HASH_B: Hash = `0x${'b'.repeat(64)}`
+const RAW: Hex = '0x02f86b'
 const EIP1559: Fees = { type: 'eip1559', maxFeePerGas: 30_000_000_000n, maxPriorityFeePerGas: 1_000_000_000n }
 const RECEIPT: Receipt = {
   transactionHash: HASH_B,
@@ -94,14 +94,28 @@ test('records an attempt together with the nonce and gas limit', () => {
   const saved = store.recordAttempt(tx.id, { nonce: 7, gasLimit: 25_200n, hash: HASH_A, raw: RAW, fees: EIP1559 })
   expect(store.get(tx.id)).toMatchObject({ nonce: 7, gasLimit: 25_200n })
   expect(store.attempts(tx.id)).toEqual([
-    { id: saved.id, txId: tx.id, hash: HASH_A, raw: RAW, fees: EIP1559, outcome: 'pending', createdAt: expect.any(String) },
+    {
+      id: saved.id,
+      txId: tx.id,
+      hash: HASH_A,
+      raw: RAW,
+      fees: EIP1559,
+      outcome: 'pending',
+      createdAt: saved.createdAt,
+    },
   ])
 })
 
 test('keeps attempts in order, with their outcomes and fee types', () => {
   const tx = add('a')
   const first = attempt(tx.id, 7, HASH_A)
-  store.recordAttempt(tx.id, { nonce: 7, gasLimit: 21_000n, hash: HASH_B, raw: RAW, fees: { type: 'legacy', gasPrice: 5n } })
+  store.recordAttempt(tx.id, {
+    nonce: 7,
+    gasLimit: 21_000n,
+    hash: HASH_B,
+    raw: RAW,
+    fees: { type: 'legacy', gasPrice: 5n },
+  })
   store.setAttemptOutcome(first.id, 'accepted')
 
   const [a, b] = store.attempts(tx.id)

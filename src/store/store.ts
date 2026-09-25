@@ -249,15 +249,32 @@ function toAttempt(row: AttemptRow): Attempt {
   }
 }
 
+// How fees and receipts look once stored as JSON: bigints become decimal strings.
+type StoredFees =
+  { type: 'legacy'; gasPrice: string } | { type: 'eip1559'; maxFeePerGas: string; maxPriorityFeePerGas: string }
+
+type StoredReceipt = {
+  transactionHash: Hash
+  blockNumber: string
+  blockHash: Hash
+  gasUsed: string
+  effectiveGasPrice: string
+  status: Receipt['status']
+}
+
 function parseFees(json: string): Fees {
-  const fees = JSON.parse(json)
+  const fees = JSON.parse(json) as StoredFees
   return fees.type === 'legacy'
     ? { type: 'legacy', gasPrice: BigInt(fees.gasPrice) }
-    : { type: 'eip1559', maxFeePerGas: BigInt(fees.maxFeePerGas), maxPriorityFeePerGas: BigInt(fees.maxPriorityFeePerGas) }
+    : {
+        type: 'eip1559',
+        maxFeePerGas: BigInt(fees.maxFeePerGas),
+        maxPriorityFeePerGas: BigInt(fees.maxPriorityFeePerGas),
+      }
 }
 
 function parseReceipt(json: string): Receipt {
-  const receipt = JSON.parse(json)
+  const receipt = JSON.parse(json) as StoredReceipt
   return {
     transactionHash: receipt.transactionHash,
     blockNumber: BigInt(receipt.blockNumber),

@@ -125,7 +125,9 @@ describe('stuck transactions', () => {
 
   test('never raises fees above the cap', async () => {
     // Base fee 1 gwei and tip 1 gwei give maxFeePerGas 3 gwei: already at this cap.
-    const rt = await createRuntime(node.url, { chain: { stuckAfterMs: STUCK_MS, gas: { maxFeePerGasWei: parseGwei('3') } } })
+    const rt = await createRuntime(node.url, {
+      chain: { stuckAfterMs: STUCK_MS, gas: { maxFeePerGasWei: parseGwei('3') } },
+    })
     await rt.testClient.setAutomine(false)
     const tx = await submitted(rt)
 
@@ -143,7 +145,11 @@ describe('nonce taken by another transaction', () => {
     const tx = await submitted(rt)
 
     // Outside txs replace ours in the mempool at nonce 0, use nonce 1 too, and are mined.
-    const outsider = createWalletClient({ account: privateKeyToAccount(KEY_0), chain: anvil, transport: http(node.url) })
+    const outsider = createWalletClient({
+      account: privateKeyToAccount(KEY_0),
+      chain: anvil,
+      transport: http(node.url),
+    })
     for (const nonce of [0, 1]) {
       await outsider.sendTransaction({
         to: ADDRESS_1,
@@ -175,7 +181,9 @@ describe('gap filler', () => {
     pool.rollback(rejectedNonce)
 
     await rt.monitor.tick() // gap too new
-    expect(rt.store.listByStatus(['queued', 'submitted', 'succeeded']).filter((tx) => tx.kind === 'gap_fill')).toEqual([])
+    expect(rt.store.listByStatus(['queued', 'submitted', 'succeeded']).filter((tx) => tx.kind === 'gap_fill')).toEqual(
+      [],
+    )
 
     await sleep(STUCK_MS)
     await rt.monitor.tick()

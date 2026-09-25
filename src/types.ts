@@ -14,8 +14,7 @@ export type FailureCode =
   | 'INTERNAL_ERROR'
 
 export type Fees =
-  | { type: 'eip1559'; maxFeePerGas: bigint; maxPriorityFeePerGas: bigint }
-  | { type: 'legacy'; gasPrice: bigint }
+  { type: 'eip1559'; maxFeePerGas: bigint; maxPriorityFeePerGas: bigint } | { type: 'legacy'; gasPrice: bigint }
 
 export type Receipt = {
   transactionHash: Hash

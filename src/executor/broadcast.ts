@@ -9,9 +9,7 @@ export type Rejection = 'nonce_too_low' | 'nonce_too_high' | 'insufficient_funds
  * rejected: every send was answered with a rejection, so no node has it (ADRs 0008 and 0009).
  */
 export type BroadcastResult =
-  | { outcome: 'accepted' }
-  | { outcome: 'unknown' }
-  | { outcome: 'rejected'; reason: Rejection; message: string }
+  { outcome: 'accepted' } | { outcome: 'unknown' } | { outcome: 'rejected'; reason: Rejection; message: string }
 
 export type SendError = { answered: false } | { answered: true; message: string }
 

@@ -3,12 +3,14 @@ import { describe, expect, test } from 'vitest'
 import { broadcast, classifyNodeMessage, describeSendError, isTransportError } from '../../src/executor/broadcast'
 import type { Sender } from '../../src/executor/rpc'
 
-const RAW = '0x02f86b' as Hex
-const HASH = `0x${'a'.repeat(64)}` as Hash
+const RAW: Hex = '0x02f86b'
+const HASH: Hash = `0x${'a'.repeat(64)}`
 
 // The shapes viem produces for each case, as observed against anvil.
 function nodeError(message: string) {
-  return new InvalidInputRpcError(new RpcRequestError({ body: {}, error: { code: -32000, message }, url: 'http://node' }))
+  return new InvalidInputRpcError(
+    new RpcRequestError({ body: {}, error: { code: -32000, message }, url: 'http://node' }),
+  )
 }
 const timeout = () => new TimeoutError({ body: {}, url: 'http://node' })
 
@@ -59,15 +61,16 @@ describe('classifyNodeMessage', () => {
 })
 
 describe('broadcast', () => {
-  // A fake RPC per URL: each call runs the next scripted response and is recorded.
-  function nodes(...scripts: Array<Array<'accept' | 'timeout' | string>>) {
+  // A fake RPC per URL: each call runs the next scripted response and is recorded. A response is
+  // 'accept', 'timeout', or the message of a rejection.
+  function nodes(...scripts: string[][]) {
     const calls: Array<{ url: number; raw: Hex }> = []
-    const senders: Sender[] = scripts.map((script, url) => async (raw) => {
+    const senders: Sender[] = scripts.map((script, url) => (raw) => {
       calls.push({ url, raw })
       const response = script.shift()
-      if (response === 'accept') return HASH
-      if (response === 'timeout') throw timeout()
-      throw nodeError(response ?? 'no scripted response')
+      if (response === 'accept') return Promise.resolve(HASH)
+      if (response === 'timeout') return Promise.reject(timeout())
+      return Promise.reject(nodeError(response ?? 'no scripted response'))
     })
     return { senders, calls }
   }
