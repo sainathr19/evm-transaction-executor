@@ -1,9 +1,22 @@
 import type { Address, LocalAccount } from 'viem'
 import type { Signers } from '../config/signers'
 import type { Logger } from '../logger'
-import type { Store, TxRecord } from '../store/store'
-import type { FailureCode, Fees } from '../types'
-import { sendAttempt, type BroadcastOptions } from './attempts'
+import type { Store } from '../store/store'
+import {
+  type ChainId,
+  describeFailure,
+  err,
+  type Fees,
+  type Nonce,
+  nonce as toNonce,
+  ok,
+  type QueuedTx,
+  type Result,
+  type Transaction,
+  type TxFailure,
+  type TxId,
+} from '../types'
+import { type BroadcastOptions, sendAttempt } from './attempts'
 import { classifyNodeMessage, describeSendError, isTransportError } from './broadcast'
 import { estimateGasLimit, priceFees, readMarketFees } from './gas'
 import type { RuntimeChain } from './rpc'
@@ -16,7 +29,7 @@ export type WorkerOptions = {
 
 export type WorkerDeps = {
   store: Store
-  chains: Map<number, RuntimeChain>
+  chains: Map<ChainId, RuntimeChain>
   signers: Signers
   senders: SenderRegistry
   logger: Logger
@@ -25,7 +38,6 @@ export type WorkerDeps = {
 const DEFAULTS: WorkerOptions = { broadcastSends: 3, broadcastDelayMs: 250 }
 
 type Prepared = { gasLimit: bigint; fees: Fees }
-type Failure = { code: FailureCode; message: string }
 
 /** How a job ended: final (failed), or submitted and now watched by the monitor. */
 type JobResult = 'final' | 'submitted'
@@ -46,15 +58,15 @@ export class Worker {
   }
 
   /** Queues a stored request. It starts as soon as its sender has a free slot. */
-  enqueue(txId: string): void {
-    const tx = this.#deps.store.get(txId)
-    if (!tx) throw new Error(`unknown request ${txId}`)
-    this.#deps.senders.get(tx.chainId, tx.sender).queue.push(txId)
+  enqueue(id: TxId): void {
+    const tx = this.#deps.store.get(id)
+    if (!tx) throw new Error(`unknown request ${id}`)
+    this.#deps.senders.get(tx.chainId, tx.sender).queue.push(id)
     this.#pump(tx.chainId, tx.sender)
   }
 
   /** Frees the slot of a submitted request that has become final. Called by the monitor. */
-  release(tx: TxRecord): void {
+  release(tx: Transaction): void {
     this.#deps.senders.get(tx.chainId, tx.sender).active.delete(tx.id)
     this.#pump(tx.chainId, tx.sender)
   }
@@ -64,12 +76,12 @@ export class Worker {
    * `minAgeMs` (ADR 0009). Same path as a request, except the nonce comes from takeGap and no slot
    * is used: the requests stuck behind the gap may be holding every slot.
    */
-  fillGap(chainId: number, sender: Address, minAgeMs: number): void {
-    const state = this.#deps.senders.get(chainId, sender)
-    const nonce = state.pool.takeGap(minAgeMs)
-    if (nonce === undefined) return
-    const tx = this.#deps.store.insertGapFill(chainId, sender)
-    this.#track(this.#process(tx.id, state, nonce))
+  fillGap(chain: ChainId, sender: Address, minAgeMs: number): void {
+    const state = this.#deps.senders.get(chain, sender)
+    const gapNonce = state.pool.takeGap(minAgeMs)
+    if (gapNonce === undefined) return
+    const tx = this.#deps.store.insertGapFill(chain, sender)
+    this.#track(this.#process(tx.id, state, gapNonce))
   }
 
   /** Resolves once no request is being processed. Requests waiting for a slot don't count. */
@@ -77,15 +89,17 @@ export class Worker {
     while (this.#running.size > 0) await Promise.allSettled([...this.#running])
   }
 
-  #pump(chainId: number, sender: Address): void {
-    const state = this.#deps.senders.get(chainId, sender)
-    const slots = this.#chain(chainId).config.maxInFlightPerSender
+  #pump(chain: ChainId, sender: Address): void {
+    const state = this.#deps.senders.get(chain, sender)
+    const slots = this.#chain(chain).config.maxInFlightPerSender
     while (state.active.size < slots && state.queue.length > 0) {
-      const txId = state.queue.shift()!
-      state.active.add(txId)
+      const id = state.queue.shift()!
+      state.active.add(id)
       this.#track(
-        this.#process(txId, state).then((result) => {
-          if (result === 'final') this.release(this.#deps.store.get(txId)!)
+        this.#process(id, state).then((result) => {
+          if (result !== 'final') return
+          state.active.delete(id)
+          this.#pump(chain, sender)
         }),
       )
     }
@@ -101,28 +115,33 @@ export class Worker {
   }
 
   /** `gapNonce` is set for a gap fill, which takes its nonce up front. */
-  async #process(txId: string, state: SenderState, gapNonce?: number): Promise<JobResult> {
+  async #process(id: TxId, state: SenderState, gapNonce?: Nonce): Promise<JobResult> {
     const { store } = this.#deps
-    const tx = store.get(txId)!
-    const log = this.#deps.logger.child({ txId, chainId: tx.chainId, sender: tx.sender, kind: tx.kind })
+    const tx = store.get(id)
+    if (tx?.status !== 'queued') {
+      this.#deps.logger.warn({ txId: id, status: tx?.status }, 'not queued, skipped')
+      return tx?.status === 'submitted' ? 'submitted' : 'final'
+    }
+
+    const log = this.#deps.logger.child({ txId: id, chainId: tx.chainId, sender: tx.sender, kind: tx.kind })
     try {
       const chain = this.#chain(tx.chainId)
       const account = this.#deps.signers.get(tx.sender)
       if (!account) throw new Error(`no signer for ${tx.sender}`)
 
       const prepared = await prepare(tx, chain)
-      if ('code' in prepared) {
+      if (!prepared.ok) {
         if (gapNonce !== undefined) state.pool.rollback(gapNonce)
-        return this.#fail(tx, prepared, log)
+        return this.#fail(tx, prepared.error, log)
       }
-      return await this.#submit(tx, prepared, chain, account, state, log, gapNonce)
+      return await this.#submit(tx, prepared.value, chain, account, state, log, gapNonce)
     } catch (error) {
       // A bug or an unexpected error. If a node may have one of the attempts, the monitor takes
       // over, just as after a restart (ADR 0003).
       log.error({ err: error }, 'unexpected error')
-      const live = store.attempts(tx.id).filter((attempt) => attempt.outcome !== 'rejected')
+      const live = store.attempts(id).filter((attempt) => attempt.outcome !== 'rejected')
       if (live.length > 0) {
-        store.markSubmitted(tx.id, live[live.length - 1].hash)
+        store.markSubmitted(id, live[live.length - 1].hash)
         return 'submitted'
       }
       if (gapNonce !== undefined) state.pool.rollback(gapNonce)
@@ -133,13 +152,13 @@ export class Worker {
 
   /** Takes a nonce as late as possible, then signs, saves and broadcasts (ADR 0009). */
   async #submit(
-    tx: TxRecord,
+    tx: QueuedTx,
     prepared: Prepared,
     chain: RuntimeChain,
     account: LocalAccount,
     state: SenderState,
     log: Logger,
-    gapNonce?: number,
+    gapNonce?: Nonce,
   ): Promise<JobResult> {
     const { store } = this.#deps
     const nonce = gapNonce ?? state.pool.take()
@@ -164,49 +183,54 @@ export class Worker {
     store.setAttemptOutcome(attempt.id, 'rejected')
     state.pool.rollback(nonce)
     await this.#resync(state, chain, tx.sender, log)
-    const code = result.reason === 'insufficient_funds' ? 'INSUFFICIENT_FUNDS' : 'BROADCAST_REJECTED'
-    return this.#fail(tx, { code, message: result.message }, log)
+    const failure: TxFailure =
+      result.reason === 'insufficient_funds'
+        ? { code: 'INSUFFICIENT_FUNDS', nodeMessage: result.message }
+        : { code: 'BROADCAST_REJECTED', nodeMessage: result.message }
+    return this.#fail(tx, failure, log)
   }
 
   /** Drops available nonces the chain has already used, so an out-of-sync pool heals itself. */
   async #resync(state: SenderState, chain: RuntimeChain, sender: Address, log: Logger): Promise<void> {
     try {
-      state.pool.reset(await chain.rpc.read.getTransactionCount({ address: sender, blockTag: 'latest' }))
+      const confirmed = await chain.rpc.read.getTransactionCount({ address: sender, blockTag: 'latest' })
+      state.pool.reset(toNonce(confirmed))
     } catch (error) {
       log.warn({ err: error }, 'could not read the nonce to resync the pool')
     }
   }
 
-  #fail(tx: TxRecord, failure: Failure, log: Logger): JobResult {
-    this.#deps.store.markFailed(tx.id, failure.code, failure.message)
-    log.warn(failure, 'failed')
+  #fail(tx: Transaction, failure: TxFailure, log: Logger): JobResult {
+    this.#deps.store.markFailed(tx.id, failure)
+    log.warn({ code: failure.code, reason: describeFailure(failure) }, 'failed')
     return 'final'
   }
 
-  #chain(chainId: number): RuntimeChain {
-    const chain = this.#deps.chains.get(chainId)
-    if (!chain) throw new Error(`chain ${chainId} is not enabled`)
-    return chain
+  #chain(chain: ChainId): RuntimeChain {
+    const runtime = this.#deps.chains.get(chain)
+    if (!runtime) throw new Error(`chain ${chain} is not enabled`)
+    return runtime
   }
 }
 
 /** Gas limit and fees. viem already retries each read (ADR 0008), so a failure here ends the request. */
-async function prepare(tx: TxRecord, chain: RuntimeChain): Promise<Prepared | Failure> {
+async function prepare(tx: QueuedTx, chain: RuntimeChain): Promise<Result<Prepared, TxFailure>> {
   const { gas } = chain.config
   try {
     const gasLimit = await estimateGasLimit(chain.rpc.read, tx, gas.gasLimitBufferPercent)
-    const fees = priceFees(await readMarketFees(chain.rpc.read, gas.type), gas)
-    if (fees === 'above_cap') {
-      return { code: 'FEE_ABOVE_CAP', message: `base fee plus tip is above the cap of ${gas.maxFeePerGasWei} wei` }
-    }
-    return { gasLimit, fees }
+    const priced = priceFees(await readMarketFees(chain.rpc.read, gas.type), gas)
+    if (!priced.ok) return err({ code: 'FEE_ABOVE_CAP', capWei: priced.error.capWei })
+    return ok({ gasLimit, fees: priced.value })
   } catch (error) {
     const answer = describeSendError(error)
     if (answer.answered) {
-      const funds = classifyNodeMessage(answer.message) === 'insufficient_funds'
-      return { code: funds ? 'INSUFFICIENT_FUNDS' : 'ESTIMATION_REVERTED', message: answer.message }
+      return err(
+        classifyNodeMessage(answer.message) === 'insufficient_funds'
+          ? { code: 'INSUFFICIENT_FUNDS', nodeMessage: answer.message }
+          : { code: 'ESTIMATION_REVERTED', nodeMessage: answer.message },
+      )
     }
-    if (isTransportError(error)) return { code: 'RPC_UNAVAILABLE', message: 'the RPC could not be reached' }
+    if (isTransportError(error)) return err({ code: 'RPC_UNAVAILABLE' })
     throw error
   }
 }

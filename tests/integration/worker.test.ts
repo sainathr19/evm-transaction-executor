@@ -5,7 +5,8 @@ import { afterEach, beforeEach, describe, expect, test } from 'vitest'
 import { startAnvil, unreachableUrl, type AnvilNode } from '../helpers/anvil'
 import { ADDRESS_0, ADDRESS_1, KEY_0 } from '../helpers/keys'
 import { nodeError, timeoutError } from '../helpers/rpc-errors'
-import { createRuntime, type TestRuntime } from '../helpers/runtime'
+import { nonce, type TxId } from '../../src/types'
+import { ANVIL, createRuntime, type TestRuntime } from '../helpers/runtime'
 
 let node: AnvilNode
 
@@ -15,8 +16,8 @@ beforeEach(async () => {
 
 afterEach(() => node.stop())
 
-function outcomes(rt: TestRuntime, txId: string) {
-  return rt.store.attempts(txId).map((attempt) => attempt.outcome)
+function outcomes(rt: TestRuntime, id: TxId) {
+  return rt.store.attempts(id).map((attempt) => attempt.outcome)
 }
 
 describe('a request that reaches the chain', () => {
@@ -50,7 +51,7 @@ describe('a request that reaches the chain', () => {
     expect(txs.map((tx) => rt.store.get(tx.id)!.status)).toEqual(['submitted', 'submitted', 'queued'])
 
     // Stand-in for the monitor finishing the first request.
-    rt.store.markFailed(txs[0].id, 'NONCE_TAKEN', 'test')
+    rt.store.markFailed(txs[0].id, { code: 'NONCE_TAKEN', nonce: nonce(0) })
     rt.worker.release(rt.store.get(txs[0].id)!)
     await rt.worker.idle()
     expect(rt.store.get(txs[2].id)!.status).toBe('submitted')
@@ -64,7 +65,7 @@ describe('failures before anything is signed', () => {
     await rt.testClient.setCode({ address: reverter, bytecode: '0x60006000fd' }) // REVERT(0, 0)
     const failed = rt.submit({ to: reverter })
     await rt.worker.idle()
-    expect(rt.store.get(failed.id)).toMatchObject({ status: 'failed', error: { code: 'ESTIMATION_REVERTED' } })
+    expect(rt.store.get(failed.id)).toMatchObject({ status: 'failed', failure: { code: 'ESTIMATION_REVERTED' } })
     expect(rt.store.attempts(failed.id)).toEqual([])
 
     const next = rt.submit()
@@ -78,7 +79,10 @@ describe('failures before anything is signed', () => {
     await rt.testClient.mine({ blocks: 1 })
     const tx = rt.submit()
     await rt.worker.idle()
-    expect(rt.store.get(tx.id)).toMatchObject({ status: 'failed', error: { code: 'FEE_ABOVE_CAP' } })
+    expect(rt.store.get(tx.id)).toMatchObject({
+      status: 'failed',
+      failure: { code: 'FEE_ABOVE_CAP', capWei: parseGwei('100') },
+    })
     expect(rt.store.attempts(tx.id)).toEqual([])
   })
 
@@ -87,7 +91,7 @@ describe('failures before anything is signed', () => {
     await rt.testClient.setBalance({ address: ADDRESS_1, value: 0n })
     const broke = rt.submit({ sender: ADDRESS_1, to: ADDRESS_0 })
     await rt.worker.idle()
-    expect(rt.store.get(broke.id)).toMatchObject({ status: 'failed', error: { code: 'INSUFFICIENT_FUNDS' } })
+    expect(rt.store.get(broke.id)).toMatchObject({ status: 'failed', failure: { code: 'INSUFFICIENT_FUNDS' } })
 
     await rt.testClient.setBalance({ address: ADDRESS_1, value: parseEther('1') })
     const funded = rt.submit({ sender: ADDRESS_1, to: ADDRESS_0 })
@@ -99,7 +103,7 @@ describe('failures before anything is signed', () => {
     const rt = await createRuntime(await unreachableUrl(), { initialNonce: 0 })
     const tx = rt.submit()
     await rt.worker.idle()
-    expect(rt.store.get(tx.id)).toMatchObject({ status: 'failed', error: { code: 'RPC_UNAVAILABLE' } })
+    expect(rt.store.get(tx.id)).toMatchObject({ status: 'failed', failure: { code: 'RPC_UNAVAILABLE' } })
     expect(rt.store.attempts(tx.id)).toEqual([])
   })
 })
@@ -111,7 +115,7 @@ describe('broadcast outcomes', () => {
     await rt.worker.idle()
     expect(rt.store.get(tx.id)).toMatchObject({ status: 'submitted', nonce: 0 })
     expect(outcomes(rt, tx.id)).toEqual(['unknown'])
-    expect(rt.senders.get(anvil.id, ADDRESS_0).pool.top).toBe(1)
+    expect(rt.senders.get(ANVIL, ADDRESS_0).pool.top).toBe(1)
   })
 
   test('a clear rejection fails the request and gives its nonce to the next one', async () => {
@@ -128,7 +132,7 @@ describe('broadcast outcomes', () => {
     await rt.worker.idle()
     expect(rt.store.get(rejected.id)).toMatchObject({
       status: 'failed',
-      error: { code: 'BROADCAST_REJECTED', message: 'intrinsic gas too low' },
+      failure: { code: 'BROADCAST_REJECTED', nodeMessage: 'intrinsic gas too low' },
     })
 
     const next = rt.submit()
@@ -150,7 +154,7 @@ describe('broadcast outcomes', () => {
     await rt.worker.idle()
     expect(rt.store.get(collided.id)).toMatchObject({
       status: 'failed',
-      error: { code: 'BROADCAST_REJECTED', message: 'nonce too low' },
+      failure: { code: 'BROADCAST_REJECTED', nodeMessage: 'nonce too low' },
     })
 
     const next = rt.submit()

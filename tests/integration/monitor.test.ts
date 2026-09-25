@@ -5,7 +5,7 @@ import { anvil } from 'viem/chains'
 import { afterEach, beforeEach, describe, expect, test } from 'vitest'
 import { startAnvil, type AnvilNode } from '../helpers/anvil'
 import { ADDRESS_0, ADDRESS_1, KEY_0 } from '../helpers/keys'
-import { createRuntime, type TestRuntime } from '../helpers/runtime'
+import { ANVIL, createRuntime, type TestRuntime } from '../helpers/runtime'
 
 const STUCK_MS = 100
 
@@ -165,15 +165,15 @@ describe('nonce taken by another transaction', () => {
     expect(rt.store.get(tx.id)!.status).toBe('submitted') // could be receipt lag: wait one more poll
 
     await rt.monitor.tick()
-    expect(rt.store.get(tx.id)).toMatchObject({ status: 'failed', error: { code: 'NONCE_TAKEN' } })
-    expect(rt.senders.get(anvil.id, ADDRESS_0).pool.top).toBe(2) // resynced past both outside nonces
+    expect(rt.store.get(tx.id)).toMatchObject({ status: 'failed', failure: { code: 'NONCE_TAKEN' } })
+    expect(rt.senders.get(ANVIL, ADDRESS_0).pool.top).toBe(2) // resynced past both outside nonces
   })
 })
 
 describe('gap filler', () => {
   test('fills a gap that has been open for stuckAfterMs, without needing a slot', async () => {
     const rt = await createRuntime(node.url, { chain: { stuckAfterMs: STUCK_MS, maxInFlightPerSender: 1 } })
-    const pool = rt.senders.get(anvil.id, ADDRESS_0).pool
+    const pool = rt.senders.get(ANVIL, ADDRESS_0).pool
     // Nonce 0 goes to a request that will be rejected; the next request gets nonce 1 and waits behind it.
     const rejectedNonce = pool.take()
     const waiting = await submitted(rt)

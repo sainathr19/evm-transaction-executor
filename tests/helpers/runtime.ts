@@ -12,8 +12,12 @@ import { SenderRegistry } from '../../src/executor/senders'
 import { Worker, type WorkerOptions } from '../../src/executor/worker'
 import { createLogger } from '../../src/logger'
 import { openDb } from '../../src/store/db'
-import { Store, type NewRequest, type TxRecord } from '../../src/store/store'
+import { type NewRequest, Store } from '../../src/store/store'
+import { chainId, nonce, type Transaction } from '../../src/types'
 import { ADDRESS_0, ADDRESS_1, KEY_0, KEY_1 } from './keys'
+
+/** The chain id of every test runtime: a local anvil node. */
+export const ANVIL = chainId(anvil.id)
 
 export type RuntimeOptions = {
   chain?: Partial<Omit<ChainConfig, 'chain' | 'gas'>> & { gas?: Partial<GasConfig> }
@@ -34,7 +38,7 @@ export type TestRuntime = {
   read: PublicClient
   testClient: TestClient
   /** Stores a request from ADDRESS_0 to ADDRESS_1 (unless overridden) and hands it to the worker. */
-  submit(overrides?: Partial<NewRequest>): TxRecord
+  submit(overrides?: Partial<NewRequest>): Transaction
 }
 
 /** Everything the worker needs, against an anvil node at `url`, with short test timings. */
@@ -59,16 +63,16 @@ export async function createRuntime(url: string, options: RuntimeOptions = {}): 
     const pool =
       options.initialNonce === undefined
         ? NoncePool.rebuild({
-            confirmed: await rpc.read.getTransactionCount({ address, blockTag: 'latest' }),
-            pending: await rpc.read.getTransactionCount({ address, blockTag: 'pending' }),
+            confirmed: nonce(await rpc.read.getTransactionCount({ address, blockTag: 'latest' })),
+            pending: nonce(await rpc.read.getTransactionCount({ address, blockTag: 'pending' })),
             held: [],
           })
-        : new NoncePool(options.initialNonce)
-    senders.add(anvil.id, address, pool)
+        : new NoncePool(nonce(options.initialNonce))
+    senders.add(ANVIL, address, pool)
   }
 
   const worker = new Worker(
-    { store, chains: new Map([[anvil.id, chain]]), signers, senders, logger: createLogger('silent') },
+    { store, chains: new Map([[ANVIL, chain]]), signers, senders, logger: createLogger('silent') },
     { broadcastDelayMs: 0, ...options.worker },
   )
 
@@ -89,7 +93,7 @@ export async function createRuntime(url: string, options: RuntimeOptions = {}): 
       const { tx } = store.insertRequest({
         idempotencyKey: randomUUID(),
         requestHash: 'test',
-        chainId: anvil.id,
+        chainId: ANVIL,
         sender: ADDRESS_0,
         to: ADDRESS_1,
         value: 1n,

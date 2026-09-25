@@ -1,10 +1,19 @@
 import { setTimeout as sleep } from 'node:timers/promises'
-import { TransactionReceiptNotFoundError, type Address, type Hash, type PublicClient } from 'viem'
+import { type Address, type Hash, type PublicClient, TransactionReceiptNotFoundError } from 'viem'
 import type { Signers } from '../config/signers'
 import type { Logger } from '../logger'
-import type { Store, TxRecord } from '../store/store'
-import type { Fees, Receipt } from '../types'
-import { sendAttempt, type BroadcastOptions } from './attempts'
+import type { Store } from '../store/store'
+import {
+  type ChainId,
+  type Fees,
+  type Nonce,
+  nonce as toNonce,
+  type Receipt,
+  type SubmittedTx,
+  type Transaction,
+  type TxId,
+} from '../types'
+import { type BroadcastOptions, sendAttempt } from './attempts'
 import { broadcast } from './broadcast'
 import { bumpFees, priceFees, readMarketFees } from './gas'
 import type { RuntimeChain } from './rpc'
@@ -37,11 +46,12 @@ export class Monitor {
   readonly #deps: MonitorDeps
   readonly #options: MonitorOptions
   readonly #broadcast: BroadcastOptions
+  readonly #chainId: ChainId
   readonly #log: Logger
   /** When each request last had an attempt sent or resent. "Stuck" is measured from here. */
-  readonly #lastSentAt = new Map<string, number>()
+  readonly #lastSentAt = new Map<TxId, number>()
   /** How many polls in a row have seen each request's nonce used by another transaction. */
-  readonly #nonceTakenPolls = new Map<string, number>()
+  readonly #nonceTakenPolls = new Map<TxId, number>()
   readonly #stop = new AbortController()
   #loop: Promise<void> | undefined
 
@@ -49,7 +59,8 @@ export class Monitor {
     this.#deps = deps
     this.#options = { ...DEFAULTS, ...options }
     this.#broadcast = { maxSends: this.#options.broadcastSends, delayMs: this.#options.broadcastDelayMs }
-    this.#log = deps.logger.child({ chainId: deps.chain.config.chain.id })
+    this.#chainId = deps.chain.rpc.chainId
+    this.#log = deps.logger.child({ chainId: this.#chainId })
   }
 
   start(): void {
@@ -63,26 +74,25 @@ export class Monitor {
 
   async tick(): Promise<void> {
     const { store, chain, signers, worker } = this.#deps
-    const chainId = chain.config.chain.id
 
     // One nonce read per sender per tick, shared by all of its requests.
-    const confirmed = new Map<Address, Promise<number>>()
-    const confirmedCount = (sender: Address) => {
+    const confirmed = new Map<Address, Promise<Nonce>>()
+    const confirmedNonce = (sender: Address) => {
       if (!confirmed.has(sender)) {
-        confirmed.set(sender, chain.rpc.read.getTransactionCount({ address: sender, blockTag: 'latest' }))
+        confirmed.set(sender, chain.rpc.read.getTransactionCount({ address: sender, blockTag: 'latest' }).then(toNonce))
       }
       return confirmed.get(sender)!
     }
 
-    for (const tx of store.listByStatus(['submitted'], chainId)) {
+    for (const tx of store.listByStatus(['submitted'], this.#chainId)) {
       try {
-        await this.#check(tx, confirmedCount)
+        await this.#check(tx, confirmedNonce)
       } catch (error) {
         this.#log.warn({ err: error, txId: tx.id }, 'could not check request')
       }
     }
 
-    for (const sender of signers.keys()) worker.fillGap(chainId, sender, chain.config.stuckAfterMs)
+    for (const sender of signers.keys()) worker.fillGap(this.#chainId, sender, chain.config.stuckAfterMs)
   }
 
   async #run(): Promise<void> {
@@ -92,7 +102,7 @@ export class Monitor {
     }
   }
 
-  async #check(tx: TxRecord, confirmedCount: (sender: Address) => Promise<number>): Promise<void> {
+  async #check(tx: SubmittedTx, confirmedNonce: (sender: Address) => Promise<Nonce>): Promise<void> {
     const { store, chain } = this.#deps
     const attempts = store.attempts(tx.id)
     const live = attempts.filter((attempt) => attempt.outcome !== 'rejected')
@@ -109,13 +119,13 @@ export class Monitor {
 
     // 2. The nonce was used by another transaction, so ours can never be mined. Needs two polls
     // in a row: a load-balanced RPC can report the new nonce before it can return the receipt.
-    const confirmed = await confirmedCount(tx.sender)
-    if (tx.nonce! < confirmed) {
+    const confirmed = await confirmedNonce(tx.sender)
+    if (tx.nonce < confirmed) {
       const polls = (this.#nonceTakenPolls.get(tx.id) ?? 0) + 1
       this.#nonceTakenPolls.set(tx.id, polls)
       if (polls < this.#options.nonceTakenPolls) return
       this.#deps.senders.get(tx.chainId, tx.sender).pool.reset(confirmed)
-      if (store.markFailed(tx.id, 'NONCE_TAKEN', `nonce ${tx.nonce} was used by another transaction`)) {
+      if (store.markFailed(tx.id, { code: 'NONCE_TAKEN', nonce: tx.nonce })) {
         this.#finished(tx, { status: 'failed', code: 'NONCE_TAKEN' })
       }
       return
@@ -137,15 +147,17 @@ export class Monitor {
   }
 
   /** Sends a replacement at the same nonce with higher fees. Returns false when the fee cap prevents it. */
-  async #replace(tx: TxRecord, previous: Fees): Promise<boolean> {
+  async #replace(tx: SubmittedTx, previous: Fees): Promise<boolean> {
     const { store, chain, signers } = this.#deps
     const { gas } = chain.config
     const market = priceFees(await readMarketFees(chain.rpc.read, gas.type), gas)
-    const fees = bumpFees(previous, market === 'above_cap' ? null : market, gas)
-    if (fees === 'above_cap') return false
+    const bumped = bumpFees(previous, market.ok ? market.value : null, gas)
+    if (!bumped.ok) return false
 
-    const draft = { nonce: tx.nonce!, gasLimit: tx.gasLimit!, fees }
-    const { attempt, result } = await sendAttempt(store, chain, signers.get(tx.sender)!, tx, draft, this.#broadcast)
+    const account = signers.get(tx.sender)
+    if (!account) throw new Error(`no signer for ${tx.sender}`)
+    const draft = { nonce: tx.nonce, gasLimit: tx.gasLimit, fees: bumped.value }
+    const { attempt, result } = await sendAttempt(store, chain, account, tx, draft, this.#broadcast)
     if (result.outcome === 'rejected') {
       // The earlier attempt is still valid. The next bump starts from this higher fee (ADR 0008).
       store.setAttemptOutcome(attempt.id, 'rejected')
@@ -158,7 +170,7 @@ export class Monitor {
     return true
   }
 
-  #finished(tx: TxRecord, fields: Record<string, unknown>): void {
+  #finished(tx: Transaction, fields: Record<string, unknown>): void {
     this.#lastSentAt.delete(tx.id)
     this.#nonceTakenPolls.delete(tx.id)
     this.#log.info({ txId: tx.id, ...fields }, 'final')
