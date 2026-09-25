@@ -19,7 +19,6 @@ Clients might also expect one sender's requests to be mined in the order they we
 - Each (chain, sender) can have at most `maxInFlightPerSender` requests in progress. The default is 16, and it's set per chain.
 - A request takes a slot when the worker starts on it, before gas estimation. It keeps the slot until it reaches a final status (`succeeded`, `reverted` or `failed`). This includes time spent on broadcast retries (`nonce too high`, `nonce too low`).
 - Requests over the cap stay `queued` and are picked up as slots free up. POST isn't affected and still returns `202`.
-- The gap filler doesn't take a slot. The transactions stuck behind a gap may be holding every slot, and only the filler can unblock them.
 
 ### Ordering
 

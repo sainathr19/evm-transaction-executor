@@ -81,15 +81,11 @@ export function describeFailure(failure: TxFailure): string {
   }
 }
 
-export type TxKind = 'request' | 'gap_fill'
-
 /** What every transaction has, whatever its state. */
 export type TxFields = {
   id: TxId
-  kind: TxKind
-  /** Null for internal gap fills. */
-  idempotencyKey: string | null
-  requestHash: string | null
+  idempotencyKey: string
+  requestHash: string
   chainId: ChainId
   sender: Address
   to: Address

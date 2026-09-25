@@ -169,30 +169,3 @@ describe('nonce taken by another transaction', () => {
     expect(rt.senders.get(ANVIL, ADDRESS_0).pool.top).toBe(2) // resynced past both outside nonces
   })
 })
-
-describe('gap filler', () => {
-  test('fills a gap that has been open for stuckAfterMs, without needing a slot', async () => {
-    const rt = await createRuntime(node.url, { chain: { stuckAfterMs: STUCK_MS, maxInFlightPerSender: 1 } })
-    const pool = rt.senders.get(ANVIL, ADDRESS_0).pool
-    // Nonce 0 goes to a request that will be rejected; the next request gets nonce 1 and waits behind it.
-    const rejectedNonce = pool.take()
-    const waiting = await submitted(rt)
-    expect(rt.store.get(waiting.id)!.nonce).toBe(1)
-    pool.rollback(rejectedNonce)
-
-    await rt.monitor.tick() // gap too new
-    expect(rt.store.listByStatus(['queued', 'submitted', 'succeeded']).filter((tx) => tx.kind === 'gap_fill')).toEqual(
-      [],
-    )
-
-    await sleep(STUCK_MS)
-    await rt.monitor.tick()
-    await rt.worker.idle()
-    await rt.monitor.tick()
-
-    const [fill] = rt.store.listByStatus(['succeeded']).filter((tx) => tx.kind === 'gap_fill')
-    expect(fill).toMatchObject({ nonce: 0, to: ADDRESS_0, value: 0n })
-    expect(rt.store.get(waiting.id)!.status).toBe('succeeded')
-    expect(pool.gaps).toEqual([])
-  })
-})

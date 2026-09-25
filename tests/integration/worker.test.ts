@@ -161,4 +161,21 @@ describe('broadcast outcomes', () => {
     await rt.worker.idle()
     expect(rt.store.get(next.id)).toMatchObject({ status: 'submitted', nonce: 1 })
   })
+
+  test('a gap left by a rejected nonce is filled by the next request, which unblocks the one behind it', async () => {
+    const rt = await createRuntime(node.url)
+    const pool = rt.senders.get(ANVIL, ADDRESS_0).pool
+    // Nonce 0 went to a request that was rejected after the next request had taken nonce 1.
+    const rejectedNonce = pool.take()
+    const waiting = rt.submit()
+    await rt.worker.idle()
+    pool.rollback(rejectedNonce)
+    expect(rt.store.get(waiting.id)).toMatchObject({ status: 'submitted', nonce: 1 })
+    expect(await rt.read.getTransactionCount({ address: ADDRESS_0 })).toBe(0) // nonce 1 can't be mined yet
+
+    const next = rt.submit()
+    await rt.worker.idle()
+    expect(rt.store.get(next.id)).toMatchObject({ status: 'submitted', nonce: 0 })
+    expect(await rt.read.getTransactionCount({ address: ADDRESS_0 })).toBe(2)
+  })
 })

@@ -7,7 +7,6 @@ import {
   describeFailure,
   err,
   type Fees,
-  type Nonce,
   nonce as toNonce,
   ok,
   type QueuedTx,
@@ -71,19 +70,6 @@ export class Worker {
     this.#pump(tx.chainId, tx.sender)
   }
 
-  /**
-   * Sends 0 ETH from the sender to itself at its lowest nonce gap, once the gap has been open for
-   * `minAgeMs` (ADR 0009). Same path as a request, except the nonce comes from takeGap and no slot
-   * is used: the requests stuck behind the gap may be holding every slot.
-   */
-  fillGap(chain: ChainId, sender: Address, minAgeMs: number): void {
-    const state = this.#deps.senders.get(chain, sender)
-    const gapNonce = state.pool.takeGap(minAgeMs)
-    if (gapNonce === undefined) return
-    const tx = this.#deps.store.insertGapFill(chain, sender)
-    this.#track(this.#process(tx.id, state, gapNonce))
-  }
-
   /** Resolves once no request is being processed. Requests waiting for a slot don't count. */
   async idle(): Promise<void> {
     while (this.#running.size > 0) await Promise.allSettled([...this.#running])
@@ -114,8 +100,7 @@ export class Worker {
     void tracked.finally(() => this.#running.delete(tracked))
   }
 
-  /** `gapNonce` is set for a gap fill, which takes its nonce up front. */
-  async #process(id: TxId, state: SenderState, gapNonce?: Nonce): Promise<JobResult> {
+  async #process(id: TxId, state: SenderState): Promise<JobResult> {
     const { store } = this.#deps
     const tx = store.get(id)
     if (tx?.status !== 'queued') {
@@ -123,18 +108,15 @@ export class Worker {
       return tx?.status === 'submitted' ? 'submitted' : 'final'
     }
 
-    const log = this.#deps.logger.child({ txId: id, chainId: tx.chainId, sender: tx.sender, kind: tx.kind })
+    const log = this.#deps.logger.child({ txId: id, chainId: tx.chainId, sender: tx.sender })
     try {
       const chain = this.#chain(tx.chainId)
       const account = this.#deps.signers.get(tx.sender)
       if (!account) throw new Error(`no signer for ${tx.sender}`)
 
       const prepared = await prepare(tx, chain)
-      if (!prepared.ok) {
-        if (gapNonce !== undefined) state.pool.rollback(gapNonce)
-        return this.#fail(tx, prepared.error, log)
-      }
-      return await this.#submit(tx, prepared.value, chain, account, state, log, gapNonce)
+      if (!prepared.ok) return this.#fail(tx, prepared.error, log)
+      return await this.#submit(tx, prepared.value, chain, account, state, log)
     } catch (error) {
       // A bug or an unexpected error. If a node may have one of the attempts, the monitor takes
       // over, just as after a restart (ADR 0003).
@@ -144,7 +126,6 @@ export class Worker {
         store.markSubmitted(id, live[live.length - 1].hash)
         return 'submitted'
       }
-      if (gapNonce !== undefined) state.pool.rollback(gapNonce)
       const message = error instanceof Error ? error.message : String(error)
       return this.#fail(tx, { code: 'INTERNAL_ERROR', message }, log)
     }
@@ -158,10 +139,9 @@ export class Worker {
     account: LocalAccount,
     state: SenderState,
     log: Logger,
-    gapNonce?: Nonce,
   ): Promise<JobResult> {
     const { store } = this.#deps
-    const nonce = gapNonce ?? state.pool.take()
+    const nonce = state.pool.take()
     let sent: Awaited<ReturnType<typeof sendAttempt>>
     try {
       sent = await sendAttempt(store, chain, account, tx, { nonce, ...prepared }, this.#broadcast)

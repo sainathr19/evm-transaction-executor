@@ -39,4 +39,3 @@ A client that retries a POST, for example after a network timeout, must not caus
 
 - Every client must generate a key for each logical request. It's one line of code.
 - Idempotency keys accumulate without limit. At this scale the rows are tiny.
-- Internal gap-fill records have no key. The column is nullable, and SQLite allows any number of `NULL`s under a `UNIQUE` constraint.
