@@ -1,5 +1,5 @@
 import { setTimeout as sleep } from 'node:timers/promises'
-import { BaseError, RpcRequestError, type Hex } from 'viem'
+import { BaseError, HttpRequestError, RpcRequestError, TimeoutError, type Hex } from 'viem'
 import type { Sender } from './rpc'
 
 export type Rejection = 'nonce_too_low' | 'nonce_too_high' | 'insufficient_funds' | 'other'
@@ -23,6 +23,12 @@ export function describeSendError(error: unknown): SendError {
   if (!(error instanceof BaseError)) return { answered: false }
   const response = error.walk((cause) => cause instanceof RpcRequestError)
   return response instanceof RpcRequestError ? { answered: true, message: response.details } : { answered: false }
+}
+
+/** A viem transport failure: a timeout, a refused connection or an HTTP error. The node gave no answer. */
+export function isTransportError(error: unknown): boolean {
+  if (!(error instanceof BaseError)) return false
+  return error.walk((cause) => cause instanceof HttpRequestError || cause instanceof TimeoutError) !== null
 }
 
 // Node software words these differently, so matching is best effort. We don't use viem's typed

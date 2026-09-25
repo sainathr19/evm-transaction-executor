@@ -55,12 +55,18 @@ Broadcasting is described in [ADR 0008](0008-retries-and-failure-handling.md): u
 |---|---|---|
 | Accepted, or `already known` | Held | `submitted` |
 | Any send unanswered | Held | `submitted`, and the monitor resolves it |
-| Every send rejected with `nonce too high` | Rolled back | Retried every 1 s, up to 5 times, then `failed` |
-| Every send rejected with `nonce too low` | `reset` from the chain | Retried with a fresh nonce, up to 3 times, then `failed` |
-| Every send rejected for any other reason | Rolled back | `failed` (`INSUFFICIENT_FUNDS`, `BROADCAST_REJECTED`) |
+| Rejected | Rolled back, then the pool resyncs from the chain | `failed` (`INSUFFICIENT_FUNDS` or `BROADCAST_REJECTED`, with the node's message) |
 | Signing or saving failed, so nothing was sent | Rolled back | `failed` (`INTERNAL_ERROR`) |
 
-`nonce too low` is only treated as a rejection when *every* send got an answer. After a send that went unanswered, it can mean our own transaction has already been mined.
+"Rejected" means every send was answered with a rejection. After a send that went unanswered, the result is `unknown` instead (ADR 0008): even `nonce too low` can then mean our own transaction has already been mined.
+
+**Resync on rejection.** After a rejection the worker gives the nonce back, then calls `reset` with the sender's confirmed nonce count from the chain.
+- If the chain hasn't used the nonce, it stays available for the next request.
+- If another transaction already used it, `reset` drops it.
+
+So a pool that is out of sync heals itself on the next rejection, and no decision about the nonce depends on the node's message. That matters because node software words rejections differently and uses one error code for all of them: anvil returns -32003 for every case. The message only picks the failure code. The request isn't retried; the client can resubmit, and the resubmitted request gets a usable nonce.
+
+**Assumption: each RPC URL behaves like a single node.** A clear rejection then means that node didn't take the transaction. A load balancer that accepts a transaction on one backend and returns another backend's error breaks this: the request would be marked `failed` although it ran. Detecting that would take a receipt lookup after every rejection, which was left out to keep the worker simple.
 
 ### Releasing a held nonce
 
@@ -107,8 +113,6 @@ The pool isn't saved. At startup it's rebuilt for each sender from SQLite and th
 
 | Setting | Default | Basis |
 |---|---|---|
-| `nonce too high` retries | 5, 1 s apart | Our choice |
-| `nonce too low` retries | 3 | Our choice |
 | Polls before `NONCE_TAKEN` | 2 | Our choice |
 
 ## Alternatives considered
@@ -123,6 +127,6 @@ The pool isn't saved. At startup it's rebuilt for each sender from SQLite and th
 - Many transactions per sender can be built and broadcast at the same time.
 - A nonce whose transaction was clearly rejected is reused by the next request, or filled by the gap filler, so later nonces don't stay stuck.
 - Each gap fill costs the gas of one plain transfer on that chain.
-- Parallel broadcasts can reach a node out of order. Nodes that reject `nonce too high` instead of holding the transaction cause short retries.
+- Parallel broadcasts can reach a node out of order. Nodes that reject `nonce too high` instead of holding the transaction make those requests fail, and clients resubmit them.
 - A sender that runs out of funds is blocked at its lowest gap until it's topped up, and `/health` shows this.
 - Correctness depends on the service being the only user of its keys ([ADR 0001](0001-single-instance-exclusive-keys.md)).

@@ -9,7 +9,7 @@ Failures happen at different points, and each needs a different response. The da
 
 ## Decision
 
-Retries happen at four layers.
+Failures are handled at four layers.
 
 ### 1. Every RPC read
 
@@ -18,7 +18,7 @@ Retries happen at four layers.
 
 ### 2. Before broadcast (gas estimate, fee lookup)
 
-- **RPC still unreachable after layer 1:** the request stays `queued`, and the worker retries with backoff (up to 30 s between tries) for up to 2 minutes. It then marks the request `failed` with `RPC_UNAVAILABLE`. Nothing has been signed, so giving up is safe.
+- **RPC still unreachable after layer 1:** the request becomes `failed` with `RPC_UNAVAILABLE`, with no further retries. Nothing has been signed, so giving up is safe, and the client can resubmit.
 - **Estimate reverts, or fee is above the cap:** the request fails immediately ([ADR 0007](0007-gas-limit-and-fees.md)). Retrying would get the same answer.
 
 ### 3. The broadcast
@@ -31,7 +31,7 @@ Retries happen at four layers.
 - **Classifying the result:**
   - Accepted, or `already known`: the request becomes `submitted`.
   - Any send unanswered: the request becomes `submitted`, keeps its nonce, and the monitor resolves it.
-  - Every send clearly rejected: handled as described in [ADR 0009](0009-nonce-pool.md). The nonce is rolled back or reset, and the request is retried or marked `failed`.
+  - Every send clearly rejected: the nonce goes back to the pool, the pool resyncs from the chain, and the request is marked `failed` ([ADR 0009](0009-nonce-pool.md)). It isn't retried; the client can resubmit.
 - **What counts as an answer:** only a JSON-RPC error response from the node. Timeouts, dropped connections and HTTP errors, including `429` and `5xx`, count as no answer. That's the safe side: the nonce is kept and the monitor resolves the transaction.
 - **Matching node errors:** we classify the node's error message ourselves, using case-insensitive patterns for `already known` (anvil says `transaction already imported`), `nonce too low`, `nonce too high` and `insufficient funds`. Every other rejection, including `replacement transaction underpriced`, is handled the same way, so it needs no pattern. We don't use viem's typed errors for this. viem's `NonceTooLowError` also matches `already known`, so using it would treat an accepted transaction as a rejection. Node software words errors differently, so this is best effort. An unrecognised error becomes `BROADCAST_REJECTED` and keeps the node's message.
 
@@ -58,7 +58,6 @@ Two choices within the monitor:
 | Setting | Default | Basis |
 |---|---|---|
 | RPC retries | 3 retries, backoff from 150 ms, 10 s timeout | viem's defaults, kept |
-| Pre-broadcast retry window | 2 minutes, backoff up to 30 s | Our choice |
 | Sends per broadcast | 3 | Our choice |
 | `stuckAfterMs` (per chain) | About 5 blocks' worth: 60 s on Ethereum mainnet, 10 s on Base | Our choice |
 | `bumpPercent` (per chain) | 12.5% | geth rejects a replacement unless both fee fields rise by at least 10%. That's the default of its `--txpool.pricebump` setting, and a node can require more. The extra 2.5 points are our margin for rounding and for nodes that require more. |
@@ -70,6 +69,8 @@ Two choices within the monitor:
 - **Detect dropped transactions with `eth_getTransactionByHash`.** Rejected. Each node has its own mempool, and load-balanced RPCs give inconsistent answers. Resending the same signed transaction is harmless, so we don't need to know.
 - **Measure stuck in blocks.** Rejected, for the reasons above.
 - **Broadcast through viem's fallback transport.** Rejected, for the reasons above.
+- **Keep retrying estimation and fee lookup for up to 2 minutes before `RPC_UNAVAILABLE`.** Dropped to keep the worker simple. viem's retries already cover short outages, and since nothing has been signed, resubmitting is safe.
+- **Retry rejected broadcasts in the worker** (`nonce too high` after a short wait, or a fresh nonce after `nonce too low`). Dropped for the same reason. The pool resyncs from the chain on every rejection, so a resubmitted request gets a usable nonce.
 
 ## Consequences
 

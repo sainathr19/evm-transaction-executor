@@ -19,6 +19,9 @@ export type ChainRpc = {
   senders: Sender[]
 }
 
+/** An enabled chain with its RPC clients. */
+export type RuntimeChain = { config: EnabledChain; rpc: ChainRpc }
+
 export function createChainRpc(chain: EnabledChain): ChainRpc {
   const transports = chain.rpcUrls.map((url) => http(url))
   const read = createPublicClient({
