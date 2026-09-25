@@ -2,7 +2,7 @@
 
 An HTTP service that sends transactions to EVM chains from accounts whose keys it holds. It handles nonces, gas, retries and receipts, so clients only have to say what to send.
 
-A client posts `{ chainId, sender, to, value, data }` and gets an id back immediately. The service then:
+A client posts `{ network, sender, to, value, data }` and gets an id back immediately. The service then:
 
 1. estimates gas and prices the fee,
 2. assigns a nonce, signs and broadcasts,
@@ -147,11 +147,11 @@ Every JSON response has the same three fields, whatever the HTTP status. The HTT
 {
   "status": "error",
   "result": null,
-  "error": { "code": "UNSUPPORTED_CHAIN", "message": "chain 1 is not configured", "details": { "supported": [31337] } }
+  "error": { "code": "UNSUPPORTED_NETWORK", "message": "network 1 is not configured", "details": { "supported": [31337] } }
 }
 ```
 
-`error.details` is always present: `null`, or extra information for that code (the failed fields for `VALIDATION_ERROR`, the supported chain ids for `UNSUPPORTED_CHAIN`).
+`error.details` is always present: `null`, or extra information for that code (the failed fields for `VALIDATION_ERROR`, the supported chain ids for `UNSUPPORTED_NETWORK`).
 
 ### `POST /transactions`
 
@@ -159,7 +159,7 @@ Requires an `Idempotency-Key` header: 1–255 printable ASCII characters. A UUID
 
 ```json
 {
-  "chainId": 84532,
+  "network": 84532,
   "sender": "0x…",
   "to": "0x…",
   "value": "1000000000000000",
@@ -169,7 +169,7 @@ Requires an `Idempotency-Key` header: 1–255 printable ASCII characters. A UUID
 
 | Field | Type | Notes |
 |---|---|---|
-| `chainId` | integer | Must be a configured chain. The spec calls this field `network`; see [ADR 0005][0005]. |
+| `network` | integer | The chain id, such as `84532` for Base Sepolia. Must be a configured chain; see [ADR 0005][0005]. |
 | `sender` | address | Must match one of the configured keys. |
 | `to` | address | Required. Contract deployment isn't supported. |
 | `value` | string | Wei, as a decimal string. JS numbers lose precision on large amounts. |
@@ -183,7 +183,7 @@ Requires an `Idempotency-Key` header: 1–255 printable ASCII characters. A UUID
 | Missing key | `400` | `error.code`: `IDEMPOTENCY_KEY_MISSING` |
 | Invalid body, or not JSON | `400` | `error.code`: `VALIDATION_ERROR`; `error.details.issues` lists each field |
 | Body over 256 kB | `413` | `error.code`: `PAYLOAD_TOO_LARGE` |
-| Chain not configured | `400` | `error.code`: `UNSUPPORTED_CHAIN`; `error.details.supported` lists the chain ids |
+| Network not configured | `400` | `error.code`: `UNSUPPORTED_NETWORK`; `error.details.supported` lists the chain ids |
 | Sender not configured | `400` | `error.code`: `UNKNOWN_SENDER` |
 
 A new request and a replay return the same transaction shape, so a client handles both the same way.
@@ -196,7 +196,7 @@ Returns the current state of a request in `result` with `200`, or `404` with `er
 {
   "id": "…",
   "status": "succeeded",
-  "chainId": 84532,
+  "network": 84532,
   "sender": "0x…",
   "to": "0x…",
   "value": "1000000000000000",
@@ -341,7 +341,7 @@ The service refuses to start if:
 - **A trusted network.** There's no authentication, as the spec allows. The service listens on `127.0.0.1` by default.
 - **Transfers and contract calls only.** `to` is required, so contracts can't be deployed.
 - **Chains.** EIP-1559 fees unless a chain's config says `legacy`, and every configured RPC is reachable at startup ([0005], [0007]). The fee caps in the example chain files are placeholders to set per deployment.
-- **The spec's `network` field is the chain id,** named `chainId` in this API ([0005]).
+- **The spec's `network` field is the chain id,** an integer such as `84532`, not a name such as `base-sepolia` ([0005]).
 
 ## Known limitations
 

@@ -13,7 +13,17 @@ import { ADDRESS_0, ADDRESS_1, KEY_0 } from '../helpers/keys'
 const ANVIL = chainId(31337)
 const HASH_A: Hash = `0x${'a'.repeat(64)}`
 const HASH_B: Hash = `0x${'b'.repeat(64)}`
-const BODY = { chainId: 31337, sender: ADDRESS_0, to: ADDRESS_1, value: '1000', data: '0xabcd' } as const
+const BODY = { network: 31337, sender: ADDRESS_0, to: ADDRESS_1, value: '1000', data: '0xabcd' } as const
+/** The same request as stored, for tests that set up the store directly. */
+const STORED = {
+  idempotencyKey: 'k',
+  requestHash: 'h',
+  chainId: ANVIL,
+  sender: ADDRESS_0,
+  to: ADDRESS_1,
+  value: 1000n,
+  data: '0xabcd',
+} as const
 
 let server: Server
 let baseUrl: string
@@ -102,8 +112,9 @@ describe('POST /transactions', () => {
   })
 
   test.each([
-    ['chainId as a string', { ...BODY, chainId: '31337' }, 'chainId'],
-    ['chainId 0', { ...BODY, chainId: 0 }, 'chainId'],
+    ['network as a string', { ...BODY, network: '31337' }, 'network'],
+    ['network 0', { ...BODY, network: 0 }, 'network'],
+    ['chainId instead of network', { ...BODY, network: undefined, chainId: 31337 }, 'network'],
     ['a short sender', { ...BODY, sender: '0x1234' }, 'sender'],
     ['a to that is not an address', { ...BODY, to: 'vitalik.eth' }, 'to'],
     ['a missing value', { ...BODY, value: undefined }, 'value'],
@@ -136,10 +147,10 @@ describe('POST /transactions', () => {
     expect(await errorOf(res)).toMatchObject({ code: 'PAYLOAD_TOO_LARGE' })
   })
 
-  test('rejects a chain that is not configured, listing the supported ones', async () => {
-    const res = await post({ ...BODY, chainId: 1 })
+  test('rejects a network that is not configured, listing the supported ones', async () => {
+    const res = await post({ ...BODY, network: 1 })
     expect(res.status).toBe(400)
-    expect(await errorOf(res)).toMatchObject({ code: 'UNSUPPORTED_CHAIN', details: { supported: [31337] } })
+    expect(await errorOf(res)).toMatchObject({ code: 'UNSUPPORTED_NETWORK', details: { supported: [31337] } })
   })
 
   test('rejects a sender that has no key', async () => {
@@ -178,7 +189,7 @@ describe('GET /transactions/:id', () => {
     expect(await resultOf(res)).toMatchObject({
       id,
       status: 'queued',
-      chainId: 31337,
+      network: 31337,
       sender: ADDRESS_0,
       to: ADDRESS_1,
       value: '1000',
@@ -193,7 +204,7 @@ describe('GET /transactions/:id', () => {
   })
 
   test('returns a mined request with its attempts and receipt, amounts as decimal strings', async () => {
-    const { tx } = store.insertRequest({ ...BODY, chainId: ANVIL, idempotencyKey: 'k', requestHash: 'h', value: 1000n })
+    const { tx } = store.insertRequest(STORED)
     const fees = { type: 'eip1559', maxFeePerGas: parseGwei('3'), maxPriorityFeePerGas: parseGwei('1') } as const
     store.recordAttempt(tx.id, { nonce: nonce(5), gasLimit: 25_200n, hash: HASH_A, raw: '0x02f8', fees })
     store.markSubmitted(tx.id, HASH_A)
@@ -249,7 +260,7 @@ describe('GET /transactions/:id', () => {
   })
 
   test('returns a failed request with its failure explained', async () => {
-    const { tx } = store.insertRequest({ ...BODY, chainId: ANVIL, idempotencyKey: 'k', requestHash: 'h', value: 1000n })
+    const { tx } = store.insertRequest(STORED)
     store.markFailed(tx.id, { code: 'FEE_ABOVE_CAP', capWei: parseGwei('100') })
     const json = await resultOf(await get(tx.id))
     expect(json).toMatchObject({ status: 'failed', failure: { code: 'FEE_ABOVE_CAP', capWei: '100000000000' } })

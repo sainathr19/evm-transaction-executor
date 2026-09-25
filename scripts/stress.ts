@@ -132,7 +132,7 @@ async function runPhase(name: string, recipient: Address, phaseRates: FaultRates
   // Like a real client: when the node rejected a request, resubmit it with a new key (ADR 0009).
   const deliver = async (transfer: (typeof transfers)[number]): Promise<ApiTransaction> => {
     for (let tries = 1; tries <= 10; tries++) {
-      const body = { chainId: 31337, sender: transfer.sender, to: recipient, value: transfer.value.toString() }
+      const body = { network: 31337, sender: transfer.sender, to: recipient, value: transfer.value.toString() }
       const tx = await waitFinal(acceptedId(await limited(() => postTransaction(service.url, body))))
       if (tx.status === 'succeeded') return tx
       if (tx.failure?.code !== 'BROADCAST_REJECTED') throw new Error(`unexpected ${tx.status}: ${tx.failure?.message}`)
