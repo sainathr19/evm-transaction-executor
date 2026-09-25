@@ -509,7 +509,7 @@ I built this with Claude Code, Anthropic's coding agent, running Claude Opus 5.5
 
 My role was the design decisions and reviewing every change. The agent wrote most of the code, tests and docs.
 
-The agent session is included with the submission: **[add the link or file name of the session export]**
+The full agent session is in [`artifacts/evm-transaction-executor-transcript.jsonl`](artifacts/evm-transaction-executor-transcript.jsonl): Claude Code's raw session log, one JSON record per line, with every prompt, response and tool call.
 
 ## Architecture decision records
 
