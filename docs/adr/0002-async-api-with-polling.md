@@ -9,8 +9,9 @@ Clients submit a transaction and eventually need its receipt. Confirmation can t
 
 ## Decision
 
-- `POST /transactions` validates the request, stores it as `queued` and immediately returns `202 { id, status }`.
-- `GET /transactions/:id` returns the current status, the hash, every attempt, the receipt once there is one, and the error if the request failed.
+- `POST /transactions` validates the request, stores it as `queued` and immediately returns `202` with the queued transaction, including its id.
+- `GET /transactions/:id` returns the current status, the hash, every attempt, the receipt once there is one, and the failure if the request failed.
+- Every JSON response uses the same envelope, `{ status, result, error }`. The HTTP status is set separately, so a client reads every body the same way.
 - Clients track requests by **our id**, not by transaction hash.
 - POST only runs checks that don't call an RPC: the body's shape, and whether the chain and sender are configured. Gas estimation, fee lookup and broadcasting happen in the background worker.
 
