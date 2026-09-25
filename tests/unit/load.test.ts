@@ -3,6 +3,7 @@ import { anvil, sepolia } from 'viem/chains'
 import { expect, test } from 'vitest'
 import { loadConfig } from '../../src/config/load'
 import type { ChainFile } from '../../src/config/types'
+import { chainId } from '../../src/types'
 import { expectConfigError } from '../helpers/errors'
 import { ADDRESS_0, KEY_0 } from '../helpers/keys'
 
@@ -14,7 +15,7 @@ const FILES: ChainFile[] = [
 test('enables only the chains that have an RPC URL, with their settings and URLs', () => {
   const config = loadConfig({ RPC_URL_31337: 'http://a.example,http://b.example', SIGNER_PRIVATE_KEYS: KEY_0 }, FILES)
   expect([...config.chains.keys()]).toEqual([31337])
-  expect(config.chains.get(31337)).toMatchObject({
+  expect(config.chains.get(chainId(31337))).toMatchObject({
     pollIntervalMs: 123,
     gas: { maxFeePerGasWei: 7n },
     rpcUrls: ['http://a.example', 'http://b.example'],

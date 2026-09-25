@@ -1,12 +1,12 @@
 import { keccak256, type Hash, type Hex, type LocalAccount } from 'viem'
-import type { Attempt, Store, TxRecord } from '../store/store'
-import type { Fees } from '../types'
+import type { Attempt, Store } from '../store/store'
+import type { Fees, Nonce, TxFields } from '../types'
 import { broadcast, type BroadcastResult } from './broadcast'
 import type { RuntimeChain } from './rpc'
 
 export type BroadcastOptions = { maxSends: number; delayMs: number }
 
-export type AttemptDraft = { nonce: number; gasLimit: bigint; fees: Fees }
+export type AttemptDraft = { nonce: Nonce; gasLimit: bigint; fees: Fees }
 
 /**
  * Signs an attempt, saves it, then broadcasts it. Saving comes first, so a crash can never lose
@@ -16,7 +16,7 @@ export async function sendAttempt(
   store: Store,
   chain: RuntimeChain,
   account: LocalAccount,
-  tx: TxRecord,
+  tx: TxFields,
   draft: AttemptDraft,
   options: BroadcastOptions,
 ): Promise<{ attempt: Attempt; result: BroadcastResult }> {
@@ -26,7 +26,7 @@ export async function sendAttempt(
   return { attempt, result }
 }
 
-async function sign(account: LocalAccount, tx: TxRecord, draft: AttemptDraft): Promise<{ raw: Hex; hash: Hash }> {
+async function sign(account: LocalAccount, tx: TxFields, draft: AttemptDraft): Promise<{ raw: Hex; hash: Hash }> {
   const common = {
     chainId: tx.chainId,
     to: tx.to,

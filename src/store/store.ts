@@ -1,34 +1,30 @@
 import { randomUUID } from 'node:crypto'
 import type { Address, Hash, Hex } from 'viem'
-import type { FailureCode, Fees, Receipt, TxKind, TxStatus } from '../types'
+import {
+  chainId,
+  type ChainId,
+  type Fees,
+  nonce,
+  type Nonce,
+  type QueuedTx,
+  type Receipt,
+  type Transaction,
+  type TxFailure,
+  type TxFields,
+  txId,
+  type TxId,
+  type TxKind,
+  type TxStatus,
+  type TxWithStatus,
+} from '../types'
 import type { Db } from './db'
-
-export type TxRecord = {
-  id: string
-  kind: TxKind
-  idempotencyKey: string | null
-  requestHash: string | null
-  chainId: number
-  sender: Address
-  to: Address
-  value: bigint
-  data: Hex
-  status: TxStatus
-  nonce: number | null
-  gasLimit: bigint | null
-  hash: Hash | null
-  receipt: Receipt | null
-  error: { code: FailureCode; message: string } | null
-  createdAt: string
-  updatedAt: string
-}
 
 /** pending: saved, not sent yet. unknown: a send went unanswered. See ADR 0008. */
 export type AttemptOutcome = 'pending' | 'accepted' | 'unknown' | 'rejected'
 
 export type Attempt = {
   id: number
-  txId: string
+  txId: TxId
   hash: Hash
   raw: Hex
   fees: Fees
@@ -39,14 +35,17 @@ export type Attempt = {
 export type NewRequest = {
   idempotencyKey: string
   requestHash: string
-  chainId: number
+  chainId: ChainId
   sender: Address
   to: Address
   value: bigint
   data: Hex
 }
 
-export type NewAttempt = { nonce: number; gasLimit: bigint; hash: Hash; raw: Hex; fees: Fees }
+export type NewAttempt = { nonce: Nonce; gasLimit: bigint; hash: Hash; raw: Hex; fees: Fees }
+
+/** Either this call stored the request, or its idempotency key already existed and the stored one is returned. */
+export type InsertResult = { created: true; tx: QueuedTx } | { created: false; tx: Transaction }
 
 type TxRow = {
   id: string
@@ -63,8 +62,7 @@ type TxRow = {
   gas_limit: string | null
   hash: string | null
   receipt: string | null
-  error_code: string | null
-  error_message: string | null
+  failure: string | null
   created_at: string
   updated_at: string
 }
@@ -81,6 +79,8 @@ type AttemptRow = {
 
 // Status changes only apply to unfinished requests, so a final status is never overwritten.
 const UNFINISHED = `status IN ('queued', 'submitted')`
+// Being broadcast or mined requires a saved attempt, which sets the nonce.
+const HAS_ATTEMPT = 'nonce IS NOT NULL'
 
 export class Store {
   readonly #db: Db
@@ -91,8 +91,7 @@ export class Store {
     this.#now = now
   }
 
-  /** Inserts the request unless its idempotency key exists; either way returns the stored one. */
-  insertRequest(input: NewRequest): { tx: TxRecord; created: boolean } {
+  insertRequest(input: NewRequest): InsertResult {
     const now = this.#timestamp()
     const { changes } = this.#db
       .prepare(
@@ -106,11 +105,12 @@ export class Store {
     const row = this.#db
       .prepare(`SELECT * FROM transactions WHERE idempotency_key = ?`)
       .get(input.idempotencyKey) as TxRow
-    return { tx: toTx(row), created: changes === 1 }
+    const tx = toTransaction(row)
+    return changes === 1 && tx.status === 'queued' ? { created: true, tx } : { created: false, tx }
   }
 
   /** A 0-value transfer from the sender to itself, used to fill a nonce gap (ADR 0009). */
-  insertGapFill(chainId: number, sender: Address): TxRecord {
+  insertGapFill(chain: ChainId, sender: Address): QueuedTx {
     const id = randomUUID()
     const now = this.#timestamp()
     this.#db
@@ -118,39 +118,42 @@ export class Store {
         `INSERT INTO transactions (id, kind, chain_id, sender, to_address, value, data, status, created_at, updated_at)
          VALUES (?, 'gap_fill', ?, ?, ?, '0', '0x', 'queued', ?, ?)`,
       )
-      .run(id, chainId, sender, sender, now, now)
-    return this.get(id)!
+      .run(id, chain, sender, sender, now, now)
+    const tx = this.get(txId(id))
+    if (tx?.status !== 'queued') throw new Error(`gap fill ${id} was not stored as queued`)
+    return tx
   }
 
-  get(id: string): TxRecord | undefined {
+  get(id: TxId): Transaction | undefined {
     const row = this.#db.prepare(`SELECT * FROM transactions WHERE id = ?`).get(id) as TxRow | undefined
-    return row && toTx(row)
+    return row && toTransaction(row)
   }
 
   /** Oldest first. */
-  listByStatus(statuses: TxStatus[], chainId?: number): TxRecord[] {
+  listByStatus<S extends TxStatus>(statuses: readonly S[], chain?: ChainId): TxWithStatus<S>[] {
     const placeholders = statuses.map(() => '?').join(', ')
-    const chainFilter = chainId === undefined ? '' : 'AND chain_id = ?'
-    const params = chainId === undefined ? statuses : [...statuses, chainId]
+    const chainFilter = chain === undefined ? '' : 'AND chain_id = ?'
+    const params = chain === undefined ? statuses : [...statuses, chain]
     const rows = this.#db
       .prepare(`SELECT * FROM transactions WHERE status IN (${placeholders}) ${chainFilter} ORDER BY rowid`)
       .all(...params) as TxRow[]
-    return rows.map(toTx)
+    const wanted: readonly TxStatus[] = statuses
+    return rows.map(toTransaction).filter((tx): tx is TxWithStatus<S> => wanted.includes(tx.status))
   }
 
   /** Saves a signed transaction and the nonce it uses, together, before it's broadcast. */
-  recordAttempt(txId: string, attempt: NewAttempt): Attempt {
+  recordAttempt(id: TxId, attempt: NewAttempt): Attempt {
     const now = this.#timestamp()
     return this.#db.transaction((): Attempt => {
       this.#db
         .prepare(`UPDATE transactions SET nonce = ?, gas_limit = ?, updated_at = ? WHERE id = ?`)
-        .run(attempt.nonce, attempt.gasLimit.toString(), now, txId)
+        .run(attempt.nonce, attempt.gasLimit.toString(), now, id)
       const { lastInsertRowid } = this.#db
         .prepare(`INSERT INTO attempts (tx_id, hash, raw, fees, outcome, created_at) VALUES (?, ?, ?, ?, 'pending', ?)`)
-        .run(txId, attempt.hash, attempt.raw, JSON.stringify(attempt.fees, bigintToString), now)
+        .run(id, attempt.hash, attempt.raw, JSON.stringify(attempt.fees, bigintToString), now)
       return {
         id: Number(lastInsertRowid),
-        txId,
+        txId: id,
         hash: attempt.hash,
         raw: attempt.raw,
         fees: attempt.fees,
@@ -165,34 +168,39 @@ export class Store {
   }
 
   /** In the order they were signed. */
-  attempts(txId: string): Attempt[] {
-    const rows = this.#db.prepare(`SELECT * FROM attempts WHERE tx_id = ? ORDER BY id`).all(txId) as AttemptRow[]
+  attempts(id: TxId): Attempt[] {
+    const rows = this.#db.prepare(`SELECT * FROM attempts WHERE tx_id = ? ORDER BY id`).all(id) as AttemptRow[]
     return rows.map(toAttempt)
   }
 
-  markSubmitted(id: string, hash: Hash): boolean {
-    return this.#update(`status = 'submitted', hash = @hash`, { id, hash })
+  markSubmitted(id: TxId, hash: Hash): boolean {
+    return this.#update(`status = 'submitted', hash = @hash`, { id, hash }, HAS_ATTEMPT)
   }
 
-  markMined(id: string, receipt: Receipt): boolean {
-    return this.#update(`status = @status, hash = @hash, receipt = @receipt`, {
+  markMined(id: TxId, receipt: Receipt): boolean {
+    const assignments = `status = @status, hash = @hash, receipt = @receipt`
+    const params = {
       id,
       status: receipt.status === 'success' ? 'succeeded' : 'reverted',
       hash: receipt.transactionHash,
       receipt: JSON.stringify(receipt, bigintToString),
-    })
+    }
+    return this.#update(assignments, params, HAS_ATTEMPT)
   }
 
-  markFailed(id: string, code: FailureCode, message: string): boolean {
-    return this.#update(`status = 'failed', error_code = @code, error_message = @message`, { id, code, message })
+  markFailed(id: TxId, failure: TxFailure): boolean {
+    return this.#update(`status = 'failed', failure = @failure`, {
+      id,
+      failure: JSON.stringify(failure, bigintToString),
+    })
   }
 
   /**
    * Nonces that belong to unfinished requests with at least one attempt a node may have
    * (not rejected). Used to rebuild the nonce pool after a restart (ADR 0009).
    */
-  heldNonces(chainId: number, sender: Address): number[] {
-    return this.#db
+  heldNonces(chain: ChainId, sender: Address): Nonce[] {
+    const values = this.#db
       .prepare(
         `SELECT DISTINCT nonce FROM transactions t
          WHERE chain_id = ? AND sender = ? AND ${UNFINISHED} AND nonce IS NOT NULL
@@ -200,12 +208,15 @@ export class Store {
          ORDER BY nonce`,
       )
       .pluck()
-      .all(chainId, sender) as number[]
+      .all(chain, sender) as number[]
+    return values.map(nonce)
   }
 
-  #update(assignments: string, params: Record<string, unknown> & { id: string }): boolean {
+  #update(assignments: string, params: Record<string, unknown> & { id: TxId }, condition = 'TRUE'): boolean {
     const { changes } = this.#db
-      .prepare(`UPDATE transactions SET ${assignments}, updated_at = @now WHERE id = @id AND ${UNFINISHED}`)
+      .prepare(
+        `UPDATE transactions SET ${assignments}, updated_at = @now WHERE id = @id AND ${UNFINISHED} AND ${condition}`,
+      )
       .run({ ...params, now: this.#timestamp() })
     return changes === 1
   }
@@ -215,32 +226,66 @@ export class Store {
   }
 }
 
-function toTx(row: TxRow): TxRecord {
-  return {
-    id: row.id,
+/** Parses a row into the state it's in, checking the fields that state requires are present. */
+function toTransaction(row: TxRow): Transaction {
+  const fields: TxFields = {
+    id: txId(row.id),
     kind: row.kind,
     idempotencyKey: row.idempotency_key,
     requestHash: row.request_hash,
-    chainId: row.chain_id,
+    chainId: chainId(row.chain_id),
     sender: row.sender as Address,
     to: row.to_address as Address,
     value: BigInt(row.value),
     data: row.data as Hex,
-    status: row.status,
-    nonce: row.nonce,
-    gasLimit: row.gas_limit === null ? null : BigInt(row.gas_limit),
-    hash: row.hash as Hash | null,
-    receipt: row.receipt === null ? null : parseReceipt(row.receipt),
-    error: row.error_code === null ? null : { code: row.error_code as FailureCode, message: row.error_message ?? '' },
     createdAt: row.created_at,
     updatedAt: row.updated_at,
+  }
+  const txNonce = row.nonce === null ? null : nonce(row.nonce)
+  const gasLimit = row.gas_limit === null ? null : BigInt(row.gas_limit)
+  const hash = row.hash as Hash | null
+  const required = <T>(value: T | null, field: string): T => {
+    if (value === null) throw new Error(`transaction ${row.id} is ${row.status} but has no ${field}`)
+    return value
+  }
+
+  switch (row.status) {
+    case 'queued':
+      return { ...fields, status: 'queued', nonce: txNonce, gasLimit }
+    case 'submitted':
+      return {
+        ...fields,
+        status: 'submitted',
+        nonce: required(txNonce, 'nonce'),
+        gasLimit: required(gasLimit, 'gas limit'),
+        hash: required(hash, 'hash'),
+      }
+    case 'succeeded':
+    case 'reverted':
+      return {
+        ...fields,
+        status: row.status,
+        nonce: required(txNonce, 'nonce'),
+        gasLimit: required(gasLimit, 'gas limit'),
+        hash: required(hash, 'hash'),
+        receipt: parseReceipt(required(row.receipt, 'receipt')),
+      }
+    case 'failed':
+      return {
+        ...fields,
+        status: 'failed',
+        nonce: txNonce,
+        gasLimit,
+        hash,
+        failure: parseFailure(required(row.failure, 'failure')),
+      }
   }
 }
 
 function toAttempt(row: AttemptRow): Attempt {
   return {
     id: row.id,
-    txId: row.tx_id,
+    txId: txId(row.tx_id),
     hash: row.hash as Hash,
     raw: row.raw as Hex,
     fees: parseFees(row.fees),
@@ -249,7 +294,7 @@ function toAttempt(row: AttemptRow): Attempt {
   }
 }
 
-// How fees and receipts look once stored as JSON: bigints become decimal strings.
+// How values look once stored as JSON: bigints become decimal strings.
 type StoredFees =
   { type: 'legacy'; gasPrice: string } | { type: 'eip1559'; maxFeePerGas: string; maxPriorityFeePerGas: string }
 
@@ -261,6 +306,11 @@ type StoredReceipt = {
   effectiveGasPrice: string
   status: Receipt['status']
 }
+
+type StoredFailure =
+  | Exclude<TxFailure, { code: 'FEE_ABOVE_CAP' | 'NONCE_TAKEN' }>
+  | { code: 'FEE_ABOVE_CAP'; capWei: string }
+  | { code: 'NONCE_TAKEN'; nonce: number }
 
 function parseFees(json: string): Fees {
   const fees = JSON.parse(json) as StoredFees
@@ -282,6 +332,22 @@ function parseReceipt(json: string): Receipt {
     gasUsed: BigInt(receipt.gasUsed),
     effectiveGasPrice: BigInt(receipt.effectiveGasPrice),
     status: receipt.status,
+  }
+}
+
+function parseFailure(json: string): TxFailure {
+  const failure = JSON.parse(json) as StoredFailure
+  switch (failure.code) {
+    case 'FEE_ABOVE_CAP':
+      return { code: 'FEE_ABOVE_CAP', capWei: BigInt(failure.capWei) }
+    case 'NONCE_TAKEN':
+      return { code: 'NONCE_TAKEN', nonce: nonce(failure.nonce) }
+    case 'ESTIMATION_REVERTED':
+    case 'RPC_UNAVAILABLE':
+    case 'INSUFFICIENT_FUNDS':
+    case 'BROADCAST_REJECTED':
+    case 'INTERNAL_ERROR':
+      return failure
   }
 }
 

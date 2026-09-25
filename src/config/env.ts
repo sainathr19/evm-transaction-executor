@@ -1,12 +1,13 @@
 import type { LevelWithSilent } from 'pino'
 import type { Hex } from 'viem'
+import { type ChainId, chainId } from '../types'
 import { ConfigError } from './error'
 
 export type Env = Record<string, string | undefined>
 
 export type EnvConfig = {
   /** chainId → RPC URLs, in fallback order. */
-  rpcUrls: Map<number, string[]>
+  rpcUrls: Map<ChainId, string[]>
   privateKeys: Hex[]
   host: string
   port: number
@@ -31,8 +32,8 @@ export function parseEnv(env: Env): EnvConfig {
   }
 }
 
-function parseRpcUrls(env: Env): Map<number, string[]> {
-  const rpcUrls = new Map<number, string[]>()
+function parseRpcUrls(env: Env): Map<ChainId, string[]> {
+  const rpcUrls = new Map<ChainId, string[]>()
   for (const [name, value] of Object.entries(env)) {
     const suffix = RPC_URL_VAR.exec(name)?.[1]
     if (suffix === undefined) continue
@@ -44,7 +45,7 @@ function parseRpcUrls(env: Env): Map<number, string[]> {
     urls.forEach((url, i) => {
       if (!isHttpUrl(url)) throw new ConfigError(`${name} entry ${i + 1} is not an http(s) URL`)
     })
-    rpcUrls.set(Number(suffix), urls)
+    rpcUrls.set(chainId(Number(suffix)), urls)
   }
   if (rpcUrls.size === 0) {
     throw new ConfigError('No chains configured: set RPC_URL_<chainId> for at least one chain')

@@ -22,8 +22,7 @@ CREATE TABLE IF NOT EXISTS transactions (
   gas_limit       TEXT,
   hash            TEXT,
   receipt         TEXT,
-  error_code      TEXT,
-  error_message   TEXT,
+  failure         TEXT,
   created_at      TEXT NOT NULL,
   updated_at      TEXT NOT NULL
 );

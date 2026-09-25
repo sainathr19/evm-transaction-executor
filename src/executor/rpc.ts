@@ -2,12 +2,13 @@ import { createPublicClient, fallback, http, type Hash, type Hex, type PublicCli
 import { sendRawTransaction } from 'viem/actions'
 import { ConfigError } from '../config/error'
 import type { EnabledChain } from '../config/load'
+import { type ChainId, chainId as toChainId } from '../types'
 
 /** Sends a signed transaction to one RPC URL, exactly once. */
 export type Sender = (raw: Hex) => Promise<Hash>
 
 export type ChainRpc = {
-  chainId: number
+  chainId: ChainId
   /** For reads: viem's retries with backoff, then the next URL (ADR 0008, layer 1). */
   read: PublicClient
   /**
@@ -32,7 +33,7 @@ export function createChainRpc(chain: EnabledChain): ChainRpc {
     const client = createPublicClient({ chain: chain.chain, transport: http(url, { retryCount: 0 }) })
     return (raw) => sendRawTransaction(client, { serializedTransaction: raw })
   })
-  return { chainId: chain.chain.id, read, senders }
+  return { chainId: toChainId(chain.chain.id), read, senders }
 }
 
 /**
