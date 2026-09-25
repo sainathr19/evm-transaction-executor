@@ -14,6 +14,11 @@ export async function startAnvil(args: string[] = []): Promise<AnvilNode> {
   return { url, stop: () => stop(proc) }
 }
 
+/** A local URL nothing is listening on, for testing an unreachable RPC. */
+export async function unreachableUrl(): Promise<string> {
+  return `http://127.0.0.1:${await freePort()}`
+}
+
 function freePort(): Promise<number> {
   return new Promise((resolve, reject) => {
     const server = createServer()
