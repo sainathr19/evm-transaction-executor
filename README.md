@@ -46,6 +46,8 @@ To run the service, copy `.env.example` to `.env`, fill it in, then run:
 npm run dev
 ```
 
+To run the whole service against a local anvil node, including a 1,000-transfer stress test, see [Localnet testing and results](#localnet-testing-and-results).
+
 ### Project layout
 
 ```
@@ -61,6 +63,7 @@ tests/
   unit/          pure logic
   integration/   against a real anvil node, started per test file
   helpers/
+scripts/         end-to-end and stress runs against a local anvil node (not part of npm test)
 ```
 
 ## Stack
@@ -354,6 +357,46 @@ These were open questions in the design and were settled during implementation.
   - vitest unit tests for the pure logic: nonce pool, fee math, error classification, store, config and API;
   - integration tests against anvil, which reproduce stuck transactions (automatic mining off), dropped transactions (`anvil_dropTransaction`), fee spikes (`anvil_setNextBlockBaseFeePerGas`), nonces used outside the service, and restarts;
   - one end-to-end test that starts the real service and uses it over HTTP only.
+
+## Localnet testing and results
+
+Two scripts run the real service against a local anvil node and use it over HTTP only. They're test tools: separate from `src/`, and not part of `npm test`.
+
+```bash
+npm run e2e
+```
+
+```bash
+npm run stress
+```
+
+**`npm run e2e`** runs each scenario from the [edge-case table](#edge-cases) once. It uses anvil's test methods to create each condition: mining turned off, a fee spike, a dropped transaction, transactions sent from outside the service, and a restart with a transaction in flight. Latest run: 21 of 21 checks passed.
+
+**`npm run stress`** sends 1,000 transfers from 5 senders twice. The first phase is clean. The second goes through a proxy that injects faults into broadcasts:
+- **5% clear rejections**, never forwarded. The request fails, and the client resubmits it with a new key.
+- **5% lost replies**, forwarded to anvil and then answered with HTTP 502.
+- **2% of signed transactions never delivered**, on any send, so the monitor has to replace them.
+
+Each phase checks:
+- **Exactly once:** every transfer has a unique value, so the recipient's balance must rise by exactly their sum.
+- **Nonces:** each sender's mined nonces are contiguous and unique, and its on-chain nonce count rose by exactly that many.
+- **Records:** every mined request is recorded under the hash that was mined, and the service log has no errors.
+
+For a quicker run, use `TRANSFERS=100 npm run stress`.
+
+Latest results, on a laptop against a local anvil node. They show how the service behaves, not a benchmark. The faulted phase varies between runs, since the faults are random.
+
+| | Clean | Faults injected |
+|---|---|---|
+| Invariants | All passed | All passed |
+| Duration | 8.0 s (125 transfers/s) | 45.8 s (22 transfers/s) |
+| Accepted → mined, p50 / p95 | 3.9 s / 6.9 s | 8.4 s / 39.1 s |
+| Faults injected | None | 36 rejections, 55 lost replies, 75 blackholed sends |
+| Recovery | None | 30 requests resubmitted; 62 needed a replacement |
+
+- **The clean phase's latency is queueing.** All 1,000 requests arrive at once, but at most 80 are in flight (5 senders × a cap of 16). A slot only frees when the monitor sees the receipt, on its 500 ms poll ([0012]).
+- **The faulted phase's long tail comes from blackholed transactions.** Each one holds up its sender until the monitor replaces it after `stuckAfterMs`, which is 5 s on anvil ([0008]).
+- **Lost replies never caused a double send.** Every one of them was mined, and the exactly-once check still passed ([0008], [0009]).
 
 ## Architecture decision records
 
