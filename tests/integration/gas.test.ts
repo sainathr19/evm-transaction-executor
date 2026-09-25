@@ -1,7 +1,7 @@
 import { createPublicClient, createTestClient, hexToBigInt, http, parseGwei, type PublicClient } from 'viem'
 import { anvil } from 'viem/chains'
 import { afterAll, beforeAll, expect, test } from 'vitest'
-import { estimateGasLimit, readMarketFees } from '../../src/gas'
+import { estimateGasLimit, readMarketFees } from '../../src/executor/gas'
 import { startAnvil, type AnvilNode } from '../helpers/anvil'
 import { ADDRESS_0, ADDRESS_1 } from '../helpers/keys'
 

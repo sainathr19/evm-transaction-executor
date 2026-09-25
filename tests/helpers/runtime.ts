@@ -4,14 +4,15 @@ import { anvil } from 'viem/chains'
 import { withDefaults } from '../../src/config/defaults'
 import type { EnabledChain } from '../../src/config/load'
 import type { ChainConfig, GasConfig } from '../../src/config/types'
+import { Monitor } from '../../src/executor/monitor'
+import { NoncePool } from '../../src/executor/nonce-pool'
+import { createChainRpc, type RuntimeChain, type Sender } from '../../src/executor/rpc'
+import { SenderRegistry } from '../../src/executor/senders'
+import { Worker, type WorkerOptions } from '../../src/executor/worker'
 import { createLogger } from '../../src/logger'
-import { NoncePool } from '../../src/nonce/pool'
-import { createChainRpc, type RuntimeChain, type Sender } from '../../src/rpc'
-import { SenderRegistry } from '../../src/senders'
 import { buildSigners } from '../../src/signers'
 import { openDb } from '../../src/store/db'
 import { Store, type NewRequest, type TxRecord } from '../../src/store/store'
-import { Worker, type WorkerOptions } from '../../src/worker'
 import { ADDRESS_0, ADDRESS_1, KEY_0, KEY_1 } from './keys'
 
 export type RuntimeOptions = {
@@ -26,6 +27,8 @@ export type RuntimeOptions = {
 export type TestRuntime = {
   store: Store
   worker: Worker
+  /** Not started: tests call tick() themselves. */
+  monitor: Monitor
   senders: SenderRegistry
   chain: RuntimeChain
   read: PublicClient
@@ -69,9 +72,15 @@ export async function createRuntime(url: string, options: RuntimeOptions = {}): 
     { broadcastDelayMs: 0, ...options.worker },
   )
 
+  const monitor = new Monitor(
+    { store, chain, signers, senders, worker, logger: createLogger('silent') },
+    { broadcastDelayMs: 0 },
+  )
+
   return {
     store,
     worker,
+    monitor,
     senders,
     chain,
     read: rpc.read,

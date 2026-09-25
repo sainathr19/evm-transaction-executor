@@ -1,7 +1,7 @@
 import { HttpRequestError, InvalidInputRpcError, RpcRequestError, TimeoutError, type Hash, type Hex } from 'viem'
 import { describe, expect, test } from 'vitest'
-import { broadcast, classifyNodeMessage, describeSendError, isTransportError } from '../../src/broadcast'
-import type { Sender } from '../../src/rpc'
+import { broadcast, classifyNodeMessage, describeSendError, isTransportError } from '../../src/executor/broadcast'
+import type { Sender } from '../../src/executor/rpc'
 
 const RAW = '0x02f86b' as Hex
 const HASH = `0x${'a'.repeat(64)}` as Hash

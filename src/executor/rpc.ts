@@ -1,7 +1,7 @@
 import { createPublicClient, fallback, http, type Hash, type Hex, type PublicClient } from 'viem'
 import { sendRawTransaction } from 'viem/actions'
-import { ConfigError } from './config/error'
-import type { EnabledChain } from './config/load'
+import { ConfigError } from '../config/error'
+import type { EnabledChain } from '../config/load'
 
 /** Sends a signed transaction to one RPC URL, exactly once. */
 export type Sender = (raw: Hex) => Promise<Hash>

@@ -10,7 +10,7 @@ A client posts `{ chainId, sender, to, value, data }` and gets an id back immedi
 
 The client polls with the id to get the result.
 
-> **Status:** the design below is agreed, and implementation has started. So far: tooling, per-chain config, env parsing and startup checks, the signer registry, the SQLite store, the nonce pool, gas and fee pricing, the RPC clients and broadcast loop, the worker, logging and the test harness. The API and monitor aren't built yet. Some details will be settled during implementation; see [Open items](#open-items).
+> **Status:** the design below is agreed, and implementation has started. So far: tooling, per-chain config, env parsing and startup checks, the signer registry, the SQLite store, the nonce pool, gas and fee pricing, the RPC clients and broadcast loop, the worker, the monitor and gap filler, logging and the test harness. The HTTP API and startup wiring (restart recovery, starting the worker and monitors) aren't built yet. Some details will be settled during implementation; see [Open items](#open-items).
 
 ## Development
 
@@ -32,6 +32,24 @@ To run the service, copy `.env.example` to `.env`, fill it in, then run:
 
 ```bash
 npm run dev
+```
+
+### Project layout
+
+```
+src/
+  main.ts        startup: load and check config, then start the service
+  app.ts         HTTP API
+  config/        env parsing, one file per chain, defaults
+  executor/      worker, monitor, nonce pool, gas pricing, broadcast, RPC clients
+  store/         SQLite schema and queries
+  signers.ts     sender address → signing account
+  logger.ts
+  types.ts       types shared by the store and the executor
+tests/
+  unit/          pure logic
+  integration/   against a real anvil node, started per test file
+  helpers/
 ```
 
 ## Stack
@@ -288,7 +306,6 @@ To settle during implementation:
 - **Testing.** Proposed:
   - vitest unit tests for the nonce pool, the fee math and error classification;
   - integration tests against anvil, which can reproduce stuck transactions (automatic mining off), dropped transactions (`anvil_dropTransaction`) and fee spikes (`anvil_setNextBlockBaseFeePerGas`).
-- **Project layout.**
 
 ## Architecture decision records
 
