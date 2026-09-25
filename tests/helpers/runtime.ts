@@ -7,6 +7,7 @@ import { buildSigners } from '../../src/config/signers'
 import type { ChainConfig, GasConfig } from '../../src/config/types'
 import { Monitor } from '../../src/executor/monitor'
 import { NoncePool } from '../../src/executor/nonce-pool'
+import { recover } from '../../src/executor/recovery'
 import { createChainRpc, type RuntimeChain, type Sender } from '../../src/executor/rpc'
 import { SenderRegistry } from '../../src/executor/senders'
 import { Worker, type WorkerOptions } from '../../src/executor/worker'
@@ -24,8 +25,10 @@ export type RuntimeOptions = {
   worker?: Partial<WorkerOptions>
   /** Replaces the broadcast senders, e.g. to simulate a node that times out. */
   wrapSenders?: (real: Sender[]) => Sender[]
-  /** Starts every pool at this nonce instead of reading the chain (for an unreachable RPC). */
+  /** Starts every pool at this nonce instead of recovering from the chain (for an unreachable RPC). */
   initialNonce?: number
+  /** An existing store, to start a second runtime on it as after a restart. */
+  store?: Store
 }
 
 export type TestRuntime = {
@@ -56,30 +59,20 @@ export async function createRuntime(url: string, options: RuntimeOptions = {}): 
     rpc: options.wrapSenders ? { ...rpc, senders: options.wrapSenders(rpc.senders) } : rpc,
   }
 
-  const store = new Store(openDb(':memory:'))
+  const store = options.store ?? new Store(openDb(':memory:'))
+  const chains = new Map([[ANVIL, chain]])
   const signers = buildSigners([KEY_0, KEY_1])
   const senders = new SenderRegistry()
-  for (const address of signers.keys()) {
-    const pool =
-      options.initialNonce === undefined
-        ? NoncePool.rebuild({
-            confirmed: nonce(await rpc.read.getTransactionCount({ address, blockTag: 'latest' })),
-            pending: nonce(await rpc.read.getTransactionCount({ address, blockTag: 'pending' })),
-            held: [],
-          })
-        : new NoncePool(nonce(options.initialNonce))
-    senders.add(ANVIL, address, pool)
+  const logger = createLogger('silent')
+  const worker = new Worker({ store, chains, signers, senders, logger }, { broadcastDelayMs: 0, ...options.worker })
+  const monitor = new Monitor({ store, chain, signers, senders, worker, logger }, { broadcastDelayMs: 0 })
+
+  // Start the way the service does, unless the RPC can't be reached to recover from.
+  if (options.initialNonce === undefined) {
+    await recover({ store, chains, signers, senders, worker, logger })
+  } else {
+    for (const address of signers.keys()) senders.add(ANVIL, address, new NoncePool(nonce(options.initialNonce)))
   }
-
-  const worker = new Worker(
-    { store, chains: new Map([[ANVIL, chain]]), signers, senders, logger: createLogger('silent') },
-    { broadcastDelayMs: 0, ...options.worker },
-  )
-
-  const monitor = new Monitor(
-    { store, chain, signers, senders, worker, logger: createLogger('silent') },
-    { broadcastDelayMs: 0 },
-  )
 
   return {
     store,
