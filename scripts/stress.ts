@@ -1,12 +1,18 @@
 // Stress test: many transfers through the real service, first clean, then with RPC faults injected by
 // a proxy between the service and anvil. Checks the invariants a nonce bug would break.
-// Usage: npm run stress            (1000 transfers)
+// Usage: npm run stress            (1000 transfers from 5 senders; anvil mines each tx on arrival)
 //        TRANSFERS=100 npm run stress
+// Options, all env vars:
+//   TRANSFERS     transfers per phase (default 1000)
+//   SENDERS       senders (default 5); any beyond anvil's first five get new keys, funded by anvil
+//   BLOCK_TIME    whole seconds between anvil blocks (default: a block for each tx, as it arrives)
+//   RPC_DELAY_MS  delay the proxy adds to every RPC call (default 0)
+//   CLEAN_ONLY=1  skip the phase with injected faults
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http'
 import type { AddressInfo } from 'node:net'
 import { setTimeout as sleep } from 'node:timers/promises'
-import { type Address, createPublicClient, type Hex, http } from 'viem'
-import { privateKeyToAccount } from 'viem/accounts'
+import { type Address, createPublicClient, createTestClient, type Hex, http, parseEther } from 'viem'
+import { generatePrivateKey, privateKeyToAccount } from 'viem/accounts'
 import { anvil } from 'viem/chains'
 import type { ApiTransaction } from '../src/app'
 import {
@@ -21,9 +27,22 @@ import {
   startAnvil,
 } from './localnet'
 
-const TRANSFERS = Number(process.env.TRANSFERS ?? 1000)
-const SENDERS = ANVIL_KEYS.map((key) => privateKeyToAccount(key).address)
+const TRANSFERS = envInteger('TRANSFERS', 1000, 1)
+const SENDER_COUNT = envInteger('SENDERS', ANVIL_KEYS.length, 1)
+const BLOCK_TIME = process.env.BLOCK_TIME ? envInteger('BLOCK_TIME', 0, 1) : null
+const RPC_DELAY_MS = envInteger('RPC_DELAY_MS', 0, 0)
+const CLEAN_ONLY = process.env.CLEAN_ONLY === '1'
+
+const KEYS: Hex[] = Array.from({ length: SENDER_COUNT }, (_, i) => ANVIL_KEYS[i] ?? generatePrivateKey())
+const SENDERS = KEYS.map((key) => privateKeyToAccount(key).address)
 const FINAL = new Set(['succeeded', 'reverted', 'failed'])
+
+/** An env var holding a whole number of at least `min`. */
+function envInteger(name: string, fallback: number, min: number): number {
+  const value = Number(process.env[name] ?? fallback)
+  if (!Number.isInteger(value) || value < min) throw new Error(`${name} must be a whole number of at least ${min}`)
+  return value
+}
 
 // --- Fault-injecting JSON-RPC proxy between the service and anvil -----------------------------------
 
@@ -33,13 +52,18 @@ const faults = { sends: 0, rejected: 0, lostReply: 0, blackholed: 0 }
 /** Whether each signed transaction is blackholed, decided the first time it's seen. */
 const blackholed = new Map<Hex, boolean>()
 
-const node = await startAnvil()
+const node = await startAnvil(BLOCK_TIME === null ? [] : ['--block-time', String(BLOCK_TIME)])
 const chain = createPublicClient({ chain: anvil, transport: http(node.url) })
+const testClient = createTestClient({ chain: anvil, mode: 'anvil', transport: http(node.url) })
+for (const address of SENDERS.slice(ANVIL_KEYS.length)) {
+  await testClient.setBalance({ address, value: parseEther('1000') })
+}
 
 const forward = async (body: string) =>
   (await fetch(node.url, { method: 'POST', headers: { 'content-type': 'application/json' }, body })).text()
 
 async function relay(body: string, res: ServerResponse): Promise<void> {
+  if (RPC_DELAY_MS > 0) await sleep(RPC_DELAY_MS) // as if the RPC were further away
   const payload = JSON.parse(body) as { id: number; method: string; params: unknown[] } | unknown[]
   if (!Array.isArray(payload) && payload.method === 'eth_sendRawTransaction') {
     faults.sends++
@@ -77,7 +101,7 @@ const proxy = createServer((req: IncomingMessage, res: ServerResponse) => {
 await new Promise<void>((resolve) => proxy.listen(0, '127.0.0.1', resolve))
 const proxyUrl = `http://127.0.0.1:${(proxy.address() as AddressInfo).port}`
 
-const service = await createService(proxyUrl, ANVIL_KEYS)
+const service = await createService(proxyUrl, KEYS)
 await service.start()
 const { check, summary } = createChecker()
 
@@ -146,7 +170,10 @@ async function runPhase(name: string, recipient: Address, phaseRates: FaultRates
   const mined = settled.flatMap((result) => (result.status === 'fulfilled' ? [result.value] : []))
   const errors = settled.flatMap((result) => (result.status === 'rejected' ? [errorMessage(result.reason)] : []))
 
-  console.log(`\n${name}: ${TRANSFERS} transfers from ${SENDERS.length} senders`)
+  const blocks = BLOCK_TIME === null ? 'a block per tx' : `${BLOCK_TIME} s blocks`
+  console.log(
+    `\n${name}: ${TRANSFERS} transfers from ${SENDERS.length} senders, ${blocks}, RPC delay ${RPC_DELAY_MS} ms`,
+  )
   check(
     'every transfer ends as succeeded',
     errors.length === 0,
@@ -197,11 +224,13 @@ await runPhase('Phase 1, clean', '0x000000000000000000000000000000000000c1ea', {
   lostReply: 0,
   blackhole: 0,
 })
-await runPhase('Phase 2, faults injected', '0x000000000000000000000000000000000000c2ea', {
-  reject: 0.05, // a clear rejection, never forwarded
-  lostReply: 0.05, // forwarded, then HTTP 502
-  blackhole: 0.02, // of signed transactions: never forwarded, on any send
-})
+if (!CLEAN_ONLY) {
+  await runPhase('Phase 2, faults injected', '0x000000000000000000000000000000000000c2ea', {
+    reject: 0.05, // a clear rejection, never forwarded
+    lostReply: 0.05, // forwarded, then HTTP 502
+    blackhole: 0.02, // of signed transactions: never forwarded, on any send
+  })
+}
 
 polling = false
 await service.stop()

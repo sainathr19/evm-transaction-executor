@@ -359,16 +359,16 @@ The startup log lists each chain's settings in effect, without its RPC URLs.
 ## What I'd improve with more time
 
 1. **Throughput on one instance.** The spec's target is hundreds of transactions a second, with more than one per block on every network. The service falls short of that once RPC calls take real time.
-   - **Where it stops.** The monitor checks each in-flight transaction with its own RPC calls, one after another, and a sender's slot is only freed when the monitor sees the receipt. So each chain tops out near 1 ÷ RPC latency, however many senders there are. Measured with a variant of the stress script that runs anvil with 2 s blocks and delays every RPC call:
+   - **Where it stops.** The monitor checks each in-flight transaction with its own RPC calls, one after another, and a sender's slot is only freed when the monitor sees the receipt. So each chain tops out near 1 ÷ RPC latency, however many senders there are. Measured with the stress script's clean phase, with anvil making a block every 2 s and a delay added to every RPC call:
 
-     | RPC delay | Senders | Transfers/s | Accepted → final, p50 |
-     |---|---|---|---|
-     | 0 ms | 5 | 39 | 5.6 s |
-     | 50 ms | 5 | 16 | 12.6 s |
-     | 100 ms | 5 | 9 | 22.9 s |
-     | 50 ms | 20 | 17 | 23.5 s |
+     | RPC delay | Senders | Transfers | Transfers/s | Accepted → mined, p50 |
+     |---|---|---|---|---|
+     | 0 ms | 5 | 400 | 40 | 5.6 s |
+     | 50 ms | 5 | 400 | 15 | 13.3 s |
+     | 100 ms | 5 | 400 | 9 | 23.0 s |
+     | 50 ms | 20 | 800 | 17 | 23.5 s |
 
-     The 122 transfers/s under [Localnet testing and results](#localnet-testing-and-results) is anvil mining each transaction on arrival and answering in under a millisecond.
+     Each row is one run, for example `CLEAN_ONLY=1 BLOCK_TIME=2 RPC_DELAY_MS=50 SENDERS=20 TRANSFERS=800 npm run stress`. The invariants passed in every run. The 122 transfers/s under [Localnet testing and results](#localnet-testing-and-results) is anvil mining each transaction on arrival and answering in under a millisecond.
    - **Watch blocks, not transactions.** Fetch each new block's transactions once and match them to in-flight requests by sender and nonce. That's one call per block per chain, however many transactions are in flight. A different hash at our sender and nonce is also proof that the nonce was taken, so `NONCE_TAKEN` wouldn't need its current wait of `stuckAfterMs` ([0009]).
    - **Fewer RPC calls per request.** Read fees once per chain per block and share them across requests, and batch JSON-RPC calls.
    - **The in-flight cap per chain.** L2 sequencers often accept more than geth's 16 pending transactions per account ([0012]).
@@ -431,7 +431,7 @@ Each phase checks:
 - **Nonces:** each sender's mined nonces are contiguous and unique, and its on-chain nonce count rose by exactly that many.
 - **Records:** every mined request is recorded under the hash that was mined, and the service log has no errors.
 
-For a quicker run, use `TRANSFERS=100 npm run stress`.
+For a quicker run, use `TRANSFERS=100 npm run stress`. The script also takes `SENDERS`, `BLOCK_TIME`, `RPC_DELAY_MS` and `CLEAN_ONLY`, described at the top of `scripts/stress.ts`. The throughput table under [What I'd improve with more time](#what-id-improve-with-more-time) uses them.
 
 Latest results, on a laptop against a local anvil node. They show how the service behaves, not a benchmark. The faulted phase varies between runs, since the faults are random.
 
