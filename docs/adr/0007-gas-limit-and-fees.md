@@ -28,7 +28,11 @@ The default buffer of 20% is **our practical choice. There's no standard value.*
 
 If the estimate reverts, the request becomes `failed` with `ESTIMATION_REVERTED` and the decoded revert reason, and nothing is broadcast.
 
-### Fees: EIP-1559 (the default)
+### Fee type
+
+The latest block decides. If it has a base fee, the chain uses EIP-1559 fees; if not, legacy fees. Nothing is configured, so a new chain is priced correctly with no setup ([ADR 0005](0005-chain-configuration.md)). An earlier version set the type in each chain's config file; that was dropped with the files.
+
+### Fees: EIP-1559
 
 - `tip = max(eth_maxPriorityFeePerGas, minPriorityFeeWei)`
 - `maxFeePerGas = min(baseFee × baseFeeMultiplier + tip, maxFeePerGasWei)`
@@ -41,11 +45,13 @@ The default `baseFeeMultiplier` is 2:
 
 ### Fees: legacy
 
-Chains without EIP-1559 set `type: 'legacy'` in their config and use `eth_gasPrice`. The type is set in config rather than detected, which removes one way for things to fail.
+Chains without a base fee use `eth_gasPrice` as the gas price.
 
 ### Fee cap
 
-Each chain sets `maxFeePerGasWei`.
+Every chain has a cap, `maxFeePerGasWei`. It defaults to 500 gwei and is set per chain with `MAX_FEE_GWEI_<chainId>`.
+
+500 gwei is our own choice, not a standard. No single value fits every chain, because fee levels differ by orders of magnitude between Ethereum mainnet and L2s. 500 gwei rarely blocks mainnet, even in a spike. On L2s, where fees are fractions of a gwei, it only catches values that are clearly wrong, such as a faulty RPC suggesting a huge tip. A deployment should set a tighter cap for each chain.
 
 - If `baseFee + tip`, or the legacy `gasPrice`, is already above the cap, the transaction couldn't be mined right now. The request becomes `failed` with `FEE_ABOVE_CAP`. It isn't kept waiting for fees to drop; the client decides whether to retry.
 - Otherwise `maxFeePerGas` is clamped to the cap, as shown above.
@@ -61,7 +67,7 @@ All wei math uses `bigint`. Percentages and multipliers are converted to basis p
 |---|---|---|
 | `gasLimitBufferPercent` | 20 | Our practical choice (see above) |
 | `baseFeeMultiplier` | 2 | The 12.5%-per-block limit is protocol; about six blocks of headroom is our choice |
-| `maxFeePerGasWei` | None; set per chain | Up to whoever runs the service. Values in the example configs are placeholders. |
+| `maxFeePerGasWei` | 500 gwei; `MAX_FEE_GWEI_<chainId>` sets it per chain | Our own choice (see Fee cap) |
 | `minPriorityFeeWei` | 0 | No minimum by default. It exists for chains where the node suggests a zero tip. |
 
 ## Alternatives considered

@@ -15,29 +15,25 @@ beforeAll(async () => {
 
 afterAll(() => node.stop())
 
-test('reads the latest base fee and the node suggested tip', async () => {
+test('reads the latest base fee and the node suggested tip when the chain has a base fee', async () => {
   const testClient = createTestClient({ chain: anvil, mode: 'anvil', transport: http(node.url) })
   await testClient.setNextBlockBaseFeePerGas({ baseFeePerGas: parseGwei('7') })
   await testClient.mine({ blocks: 1 })
 
   // anvil suggests a 1 gwei tip
-  expect(await readMarketFees(client, 'eip1559')).toEqual({
+  expect(await readMarketFees(client)).toEqual({
     type: 'eip1559',
     baseFee: parseGwei('7'),
     tip: parseGwei('1'),
   })
 })
 
-test('reads eth_gasPrice for legacy chains', async () => {
-  const nodeGasPrice = hexToBigInt(await client.request({ method: 'eth_gasPrice' }))
-  expect(await readMarketFees(client, 'legacy')).toEqual({ type: 'legacy', gasPrice: nodeGasPrice })
-})
-
-test('says to use legacy pricing when the chain has no base fee', async () => {
+test('reads eth_gasPrice when the latest block has no base fee', async () => {
   const berlin = await startAnvil(['--hardfork', 'berlin'])
   try {
-    const preLondon = createPublicClient({ chain: anvil, transport: http(berlin.url) })
-    await expect(readMarketFees(preLondon, 'eip1559')).rejects.toThrow(/legacy/)
+    const preLondon = createPublicClient({ transport: http(berlin.url) })
+    const nodeGasPrice = hexToBigInt(await preLondon.request({ method: 'eth_gasPrice' }))
+    expect(await readMarketFees(preLondon)).toEqual({ type: 'legacy', gasPrice: nodeGasPrice })
   } finally {
     await berlin.stop()
   }

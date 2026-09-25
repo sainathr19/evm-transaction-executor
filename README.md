@@ -54,7 +54,7 @@ To run the whole service against a local anvil node, including a 1,000-transfer 
 src/
   main.ts        startup: load and check config, then start the service
   app.ts         HTTP API
-  config/        env parsing, one file per chain, defaults, signer registry
+  config/        env parsing, defaults, signer registry
   executor/      worker, monitor, nonce pool, gas pricing, broadcast, RPC clients
   store/         SQLite schema and queries
   logger.ts
@@ -101,7 +101,7 @@ flowchart LR
 | **Nonce pools** | One per (chain, sender). Hands out the smallest free nonce. Takes a nonce back only when no node can have the transaction. |
 | **Monitor** | One loop per chain. Looks for receipts, resends or fee-bumps stuck transactions, and detects nonces used outside the service. |
 | **Store** | SQLite tables `transactions` and `attempts`. The source of truth: nonce pools are rebuilt from it after a restart. |
-| **Chain registry** | One config file per chain, plus `RPC_URL_<chainId>` env vars. Checked against each RPC at startup. |
+| **Chain registry** | Built from `RPC_URL_<chainId>` env vars, with optional per-chain settings. Checked against each RPC at startup. |
 | **Signer registry** | Maps each sender address to a viem `Account`, built from `SIGNER_PRIVATE_KEYS`. |
 
 ### Life of a request
@@ -249,7 +249,7 @@ Returns `Online` as plain text, outside the JSON envelope, while the service is 
 | Code | Meaning |
 |---|---|
 | `ESTIMATION_REVERTED` | Gas estimation reverted. Includes the decoded revert reason. Nothing was broadcast. |
-| `FEE_ABOVE_CAP` | The current base fee plus tip is above the chain's `maxFeePerGasWei`. |
+| `FEE_ABOVE_CAP` | The current base fee plus tip is above the chain's fee cap (`MAX_FEE_GWEI_<chainId>`, 500 gwei by default). |
 | `RPC_UNAVAILABLE` | The RPC couldn't be reached for gas estimation or fee lookup, even after viem's retries. |
 | `INSUFFICIENT_FUNDS` | The node rejected the transaction because the balance can't cover value plus the maximum gas cost. |
 | `BROADCAST_REJECTED` | Any other rejection. Includes the node's message. |
@@ -265,36 +265,28 @@ Returns `Online` as plain text, outside the JSON envelope, while the service is 
 RPC_URL_31337=http://127.0.0.1:8545
 RPC_URL_84532=https://…
 
+# Optional, per chain. Defaults below.
+POLL_INTERVAL_MS_84532=1000
+STUCK_AFTER_MS_84532=10000
+MAX_FEE_GWEI_84532=0.5
+
 # Comma-separated private keys. Each key's address becomes a sender.
 SIGNER_PRIVATE_KEYS=0x…,0x…
 ```
 
-A chain is enabled when its `RPC_URL_<chainId>` is set. Every sender can be used on every enabled chain.
+Setting `RPC_URL_<chainId>` is all it takes to add a chain. Every sender can be used on every enabled chain.
 
 ### Per-chain settings
 
-Each chain has a typed file in `src/config/chains/`. Settings a file leaves out come from shared defaults.
+Three settings vary enough between chains to be set per chain, each with an optional env var ([0005]):
 
-```ts
-// src/config/chains/base-sepolia.ts   (the filename is only for humans)
-export default {
-  chain: baseSepolia,               // viem chain definition; chain.id is the key everywhere
-  pollIntervalMs: 2_000,
-  stuckAfterMs: 10_000,
-  maxInFlightPerSender: 16,
-  gas: {
-    type: 'eip1559',                // or 'legacy'
-    gasLimitBufferPercent: 20,
-    baseFeeMultiplier: 2,
-    minPriorityFeeWei: 0n,
-    maxFeePerGasWei: parseGwei('5'), // example value; set per chain
-    bumpPercent: 12.5,
-    maxBumps: 5,
-  },
-} satisfies ChainConfig
-```
+| Variable | Default | What it does |
+|---|---|---|
+| `POLL_INTERVAL_MS_<chainId>` | 2000 | How often the monitor looks for receipts. Set it near the chain's block time. |
+| `STUCK_AFTER_MS_<chainId>` | 60000 | How long a transaction can go without a receipt before it's resent or its fee is raised. About 5 blocks ([0008]). |
+| `MAX_FEE_GWEI_<chainId>` | 500 | The fee cap. 500 gwei is our own choice, loose enough for mainnet; set a tighter cap per chain ([0007]). |
 
-The ADRs list every default and where it comes from: [0007][0007] for gas, [0008][0008] for retries, [0009][0009] for nonces, [0012][0012] for the in-flight cap.
+The rest are the same on every chain, set in `src/config/defaults.ts`: the gas limit buffer, base fee multiplier and minimum tip ([0007]), fee bumps ([0008]), and the in-flight cap ([0012]). The ADRs list each default and where it comes from. The fee type isn't configured: a chain whose latest block has no base fee gets legacy pricing.
 
 ### Startup checks
 
@@ -302,8 +294,10 @@ The service refuses to start if:
 
 - no chain or no key is configured;
 - a key is malformed or duplicated;
-- an `RPC_URL_<id>` is set but no config file exists for that chain id;
-- a chain's RPC reports a different `eth_chainId` than its config, or can't be reached to check.
+- a per-chain setting is malformed, or is set for a chain with no `RPC_URL_<chainId>`;
+- a chain's RPC reports a different `eth_chainId`, or can't be reached to check. This also catches a mistyped chain id.
+
+The startup log lists each chain's settings in effect, without its RPC URLs.
 
 ## Edge cases
 
@@ -340,7 +334,7 @@ The service refuses to start if:
 - **Clients poll and resubmit.** They poll `GET /transactions/:id` for the result ([0002]). When a request fails without reaching the chain, they resubmit it with a new `Idempotency-Key` ([0009]). They wait for one transaction to be mined before sending another that depends on it ([0012]).
 - **A trusted network.** There's no authentication, as the spec allows. The service listens on `127.0.0.1` by default.
 - **Transfers and contract calls only.** `to` is required, so contracts can't be deployed.
-- **Chains.** EIP-1559 fees unless a chain's config says `legacy`, and every configured RPC is reachable at startup ([0005], [0007]). The fee caps in the example chain files are placeholders to set per deployment.
+- **Chains.** Standard EVM chains: plain EIP-1559 or legacy transactions over standard JSON-RPC, and every configured RPC is reachable at startup ([0005], [0007]). The 500 gwei default fee cap is meant to be tightened per chain.
 - **The spec's `network` field is the chain id,** an integer such as `84532`, not a name such as `base-sepolia` ([0005]).
 
 ## Known limitations
@@ -364,7 +358,7 @@ The service refuses to start if:
 
 1. **Throughput per sender.** The spec's target is hundreds of transactions a second, with more than one per block on every network. On anvil the service does about 125 transfers/s with 5 senders. A sender's slot is only freed when the monitor sees the receipt on its 500 ms poll, so the cap and the poll interval set the pace. Next steps:
    - watch new blocks (a WebSocket subscription, or `eth_getBlockReceipts` per block), so slots free on the next block instead of the next poll;
-   - tune the in-flight cap per chain;
+   - make the in-flight cap configurable per chain;
    - spread load across more senders.
 2. **More than one instance.** Split senders across instances, each owning its own keys, or move nonce ownership into Postgres with a lease per sender ([0001]).
 3. **Reorg safety.** A confirmation depth per chain, with a reorged transaction going back to `submitted` ([0004]).
@@ -429,7 +423,7 @@ Latest results, on a laptop against a local anvil node. They show how the servic
 | Recovery | None | 30 requests resubmitted; 62 needed a replacement |
 
 - **The clean phase's latency is queueing.** All 1,000 requests arrive at once, but at most 80 are in flight (5 senders × a cap of 16). A slot only frees when the monitor sees the receipt, on its 500 ms poll ([0012]).
-- **The faulted phase's long tail comes from blackholed transactions.** Each one holds up its sender until the monitor replaces it after `stuckAfterMs`, which is 5 s on anvil ([0008]).
+- **The faulted phase's long tail comes from blackholed transactions.** Each one holds up its sender until the monitor replaces it after `stuckAfterMs`, which the localnet scripts set to 5 s ([0008]).
 - **Lost replies never caused a double send.** Every one of them was mined, and the exactly-once check still passed ([0008], [0009]).
 
 ## Use of a coding agent
@@ -463,7 +457,7 @@ Each significant decision is recorded in [`docs/adr/`](docs/adr/) with its conte
 | [0002] | Asynchronous API: `202` and polling |
 | [0003] | SQLite; save each signed transaction before broadcasting it |
 | [0004] | The first receipt is final |
-| [0005] | Chains identified by chain id; one config file per chain |
+| [0005] | Chains identified by chain id, configured from env vars |
 | [0006] | Private keys from env vars now; KMS or a secret manager in production |
 | [0007] | Gas limit and fee pricing |
 | [0008] | Retries and failure handling |

@@ -1,8 +1,8 @@
 import { createPublicClient, fallback, http, type Hash, type Hex, type PublicClient } from 'viem'
 import { sendRawTransaction } from 'viem/actions'
 import { ConfigError } from '../config/error'
-import type { EnabledChain } from '../config/load'
-import { type ChainId, chainId as toChainId } from '../types'
+import type { ChainConfig } from '../config/types'
+import type { ChainId } from '../types'
 
 /** Sends a signed transaction to one RPC URL, exactly once. */
 export type Sender = (raw: Hex) => Promise<Hash>
@@ -21,27 +21,26 @@ export type ChainRpc = {
 }
 
 /** An enabled chain with its RPC clients. */
-export type RuntimeChain = { config: EnabledChain; rpc: ChainRpc }
+export type RuntimeChain = { config: ChainConfig; rpc: ChainRpc }
 
-export function createChainRpc(chain: EnabledChain): ChainRpc {
+// The clients get no viem chain definition: any chain id works, and only standard JSON-RPC is used.
+// Signing takes the chain id from the request (ADR 0005).
+export function createChainRpc(chain: ChainConfig): ChainRpc {
   const transports = chain.rpcUrls.map((url) => http(url))
-  const read = createPublicClient({
-    chain: chain.chain,
-    transport: transports.length === 1 ? transports[0] : fallback(transports),
-  })
+  const read = createPublicClient({ transport: transports.length === 1 ? transports[0] : fallback(transports) })
   const senders = chain.rpcUrls.map((url): Sender => {
-    const client = createPublicClient({ chain: chain.chain, transport: http(url, { retryCount: 0 }) })
+    const client = createPublicClient({ transport: http(url, { retryCount: 0 }) })
     return (raw) => sendRawTransaction(client, { serializedTransaction: raw })
   })
-  return { chainId: toChainId(chain.chain.id), read, senders }
+  return { chainId: chain.chainId, read, senders }
 }
 
 /**
  * Startup check (ADR 0005): every RPC URL of a chain must serve that chain. Each URL is checked,
  * so a wrong fallback URL can't hide behind a correct first one. Messages never include the URL.
  */
-export async function verifyChainId(chain: EnabledChain): Promise<void> {
-  const expected = chain.chain.id
+export async function verifyChainId(chain: ChainConfig): Promise<void> {
+  const expected = chain.chainId
   await Promise.all(
     chain.rpcUrls.map(async (url, i) => {
       const where = `RPC_URL_${expected} entry ${i + 1}`

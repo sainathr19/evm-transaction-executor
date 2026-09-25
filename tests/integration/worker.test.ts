@@ -56,6 +56,24 @@ describe('a request that reaches the chain', () => {
     await rt.worker.idle()
     expect(rt.store.get(txs[2].id)!.status).toBe('submitted')
   })
+
+  test('on a chain without a base fee, is priced and signed as a legacy transaction', async () => {
+    const berlin = await startAnvil(['--hardfork', 'berlin'])
+    try {
+      const rt = await createRuntime(berlin.url)
+      const tx = rt.submit()
+      await rt.worker.idle()
+
+      const [attempt] = rt.store.attempts(tx.id)
+      expect(attempt.fees.type).toBe('legacy')
+      expect(await rt.read.getTransactionReceipt({ hash: attempt.hash })).toMatchObject({
+        status: 'success',
+        type: 'legacy',
+      })
+    } finally {
+      await berlin.stop()
+    }
+  })
 })
 
 describe('failures before anything is signed', () => {

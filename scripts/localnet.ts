@@ -61,6 +61,10 @@ export async function createService(rpcUrl: string, keys: Hex[]): Promise<Servic
         env: {
           PATH: process.env.PATH,
           RPC_URL_31337: rpcUrl,
+          // anvil mines on arrival: poll often and call a transaction stuck after 5 s.
+          POLL_INTERVAL_MS_31337: '500',
+          STUCK_AFTER_MS_31337: '5000',
+          MAX_FEE_GWEI_31337: '100',
           SIGNER_PRIVATE_KEYS: keys.join(','),
           PORT: port,
           DB_PATH: join(dir, 'executor.db'),

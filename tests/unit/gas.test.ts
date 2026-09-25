@@ -4,7 +4,6 @@ import type { GasConfig } from '../../src/config/types'
 import { applyGasBuffer, bumpFees, priceFees } from '../../src/executor/gas'
 
 const GAS: GasConfig = {
-  type: 'eip1559',
   gasLimitBufferPercent: 20,
   baseFeeMultiplier: 2,
   minPriorityFeeWei: 0n,
@@ -71,7 +70,7 @@ describe('priceFees, EIP-1559', () => {
 })
 
 describe('priceFees, legacy', () => {
-  const legacy: GasConfig = { ...GAS, type: 'legacy', maxFeePerGasWei: parseGwei('10') }
+  const legacy: GasConfig = { ...GAS, maxFeePerGasWei: parseGwei('10') }
 
   test('uses the node gas price', () => {
     expect(priceFees({ type: 'legacy', gasPrice: parseGwei('5') }, legacy)).toEqual({
@@ -124,7 +123,7 @@ describe('bumpFees', () => {
   })
 
   test('bumps a legacy gas price the same way', () => {
-    const legacy: GasConfig = { ...GAS, type: 'legacy', maxFeePerGasWei: parseGwei('10') }
+    const legacy: GasConfig = { ...GAS, maxFeePerGasWei: parseGwei('10') }
     const old = { type: 'legacy', gasPrice: parseGwei('8') } as const
     expect(bumpFees(old, null, legacy)).toEqual({ ok: true, value: { type: 'legacy', gasPrice: parseGwei('9') } })
     expect(bumpFees(old, { type: 'legacy', gasPrice: parseGwei('9.5') }, legacy)).toEqual({

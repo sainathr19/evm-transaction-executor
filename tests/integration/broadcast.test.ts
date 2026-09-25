@@ -1,13 +1,14 @@
 import { createServer } from 'node:http'
 import type { AddressInfo } from 'node:net'
-import { createPublicClient, createTestClient, http, parseGwei, type Chain, type Hex } from 'viem'
+import { createPublicClient, createTestClient, http, parseGwei, type Hex } from 'viem'
 import { privateKeyToAccount } from 'viem/accounts'
 import { anvil, sepolia } from 'viem/chains'
 import { afterAll, beforeAll, describe, expect, test } from 'vitest'
 import { broadcast } from '../../src/executor/broadcast'
-import { withDefaults } from '../../src/config/defaults'
-import type { EnabledChain } from '../../src/config/load'
+import { DEFAULTS } from '../../src/config/defaults'
+import type { ChainConfig } from '../../src/config/types'
 import { createChainRpc, verifyChainId } from '../../src/executor/rpc'
+import { chainId } from '../../src/types'
 import { startAnvil, unreachableUrl, type AnvilNode } from '../helpers/anvil'
 import { expectConfigErrorAsync } from '../helpers/errors'
 import { ADDRESS_1, KEY_0 } from '../helpers/keys'
@@ -20,8 +21,8 @@ beforeAll(async () => {
 
 afterAll(() => node.stop())
 
-function enabled(rpcUrls: string[], chain: Chain = anvil): EnabledChain {
-  return { ...withDefaults({ chain, gas: { maxFeePerGasWei: parseGwei('100') } }), rpcUrls }
+function enabled(rpcUrls: string[], id: number = anvil.id): ChainConfig {
+  return { chainId: chainId(id), rpcUrls, ...DEFAULTS }
 }
 
 async function signTransfer(key: Hex): Promise<Hex> {
@@ -142,7 +143,7 @@ describe('verifyChainId', () => {
   })
 
   test('refuses a URL that serves a different chain, without echoing it', async () => {
-    const error = await expectConfigErrorAsync(verifyChainId(enabled([node.url], sepolia)))
+    const error = await expectConfigErrorAsync(verifyChainId(enabled([node.url], sepolia.id)))
     expect(error.message).toContain(`RPC_URL_${sepolia.id} entry 1`)
     expect(error.message).toContain(String(anvil.id))
     expect(error.message).not.toContain(node.url)

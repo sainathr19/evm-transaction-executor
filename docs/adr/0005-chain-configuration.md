@@ -1,54 +1,47 @@
-# ADR 0005: Chains identified by chain id, one config file per chain
+# ADR 0005: Chains identified by chain id, configured from env vars
 
 - **Status:** Accepted
-- **Date:** 2026-09-25
+- **Date:** 2026-09-25, revised 2026-09-26
 
 ## Context
 
-The spec requires RPC endpoints to come from environment variables. Each chain also needs its own settings, such as polling interval, gas and stuck detection, with room to add more later.
+The spec requires RPC endpoints to come from environment variables. Adding a network should need nothing more than that. A few settings also differ between chains, mainly because block times range from about 250 ms to 12 s, and fee levels differ by orders of magnitude.
 
 ## Decision
 
 - **The chain id is the only identifier.** Requests carry it in the spec's `network` field, as an integer (`"network": 84532`). The field was briefly named `chainId`, which says exactly what it holds, but it was renamed back so the API matches the spec's request fields. Inside the service it's still called `chainId`.
-- **One typed file per chain** in `src/config/chains/`, keyed by the `id` of its viem chain definition. Shared defaults are merged with each chain's overrides. The filename is only for humans.
+- **`RPC_URL_<chainId>` alone enables a chain.** A comma-separated list sets a fallback order. Adding a chain needs no code change.
+- **Three optional settings per chain**, for the values that really differ between chains:
 
-  ```ts
-  // src/config/chains/base-sepolia.ts
-  export default {
-    chain: baseSepolia,               // chain.id (84532) is the key everywhere
-    pollIntervalMs: 2_000,
-    stuckAfterMs: 10_000,
-    maxInFlightPerSender: 16,
-    gas: {
-      type: 'eip1559',                // or 'legacy'
-      gasLimitBufferPercent: 20,
-      baseFeeMultiplier: 2,
-      minPriorityFeeWei: 0n,
-      maxFeePerGasWei: parseGwei('5'), // example value; set per chain
-      bumpPercent: 12.5,
-      maxBumps: 5,
-    },
-  } satisfies ChainConfig
-  ```
+  | Variable | Default | Why it varies |
+  |---|---|---|
+  | `POLL_INTERVAL_MS_<chainId>` | 2000 | How often the monitor looks for receipts; should follow the block time |
+  | `STUCK_AFTER_MS_<chainId>` | 60000 | About 5 blocks' worth ([ADR 0008](0008-retries-and-failure-handling.md)) |
+  | `MAX_FEE_GWEI_<chainId>` | 500 | The fee cap; fee levels differ by orders of magnitude ([ADR 0007](0007-gas-limit-and-fees.md)) |
 
-  The defaults and where they come from are listed in [ADR 0007](0007-gas-limit-and-fees.md) (gas), [ADR 0008](0008-retries-and-failure-handling.md) (retries) and [ADR 0012](0012-in-flight-cap.md) (in-flight cap).
-- **RPC URLs** come from `RPC_URL_<chainId>`. A comma-separated list sets a fallback order. A chain is enabled when its variable is set.
-- **Settings that aren't secret live in code**, where they're typed and reviewed. RPC URLs stay in env vars because they often contain API keys.
+- **Every other setting is one default in code**, the same on every chain (`src/config/defaults.ts`): the gas limit buffer, base fee multiplier and minimum tip ([ADR 0007](0007-gas-limit-and-fees.md)), fee bumps ([ADR 0008](0008-retries-and-failure-handling.md)) and the in-flight cap ([ADR 0012](0012-in-flight-cap.md)).
+- **The fee type isn't configured.** The latest block decides: a base fee means EIP-1559, none means legacy ([ADR 0007](0007-gas-limit-and-fees.md)).
+- **No viem chain definitions.** RPC clients are created without one. The service only uses standard JSON-RPC, and signing takes the chain id from the request.
 - **Startup checks fail fast:**
-  - each enabled chain's RPC must return the configured `eth_chainId`;
-  - an `RPC_URL_<id>` with no matching config file stops startup, because a typo in a chain id should be loud;
+  - each of a chain's RPC URLs must return its `eth_chainId`, which also catches a mistyped chain id in `RPC_URL_<chainId>`;
+  - a per-chain setting for a chain with no `RPC_URL_<chainId>` stops startup, since it's most likely a typo in the chain id;
+  - a malformed value stops startup;
   - at least one chain must be enabled.
+- The startup log lists each chain's settings in effect, without its RPC URLs, which often contain API keys.
 - There's no `confirmations` setting ([ADR 0004](0004-first-receipt-is-final.md)).
 
 ## Alternatives considered
 
-- **Named networks** (`"network": "base-sepolia"`). Rejected. Names need a mapping to chain ids and config, while the chain id is already unique and every RPC can confirm it.
-- **All settings in env vars** (`BASE_SEPOLIA_POLL_INTERVAL_MS=…`). Rejected. They're untyped strings and awkward for nested settings.
-- **A JSON or YAML config file.** Rejected. It loses type checking, and viem's chain definitions are already TypeScript.
+- **A typed file per chain in `src/config/chains/`.** This was the first version: an `RPC_URL_<chainId>` without a matching file stopped startup. It gave typed, reviewed settings, but adding a network took a code change and a redeploy, while the spec expects networks to come from env vars. Replaced.
+- **Keeping the files as optional overrides.** Rejected. It means two places to look for a chain's settings, and a rule for which one wins.
+- **Every setting per chain in env vars** (`GAS_LIMIT_BUFFER_PERCENT_84532=…`). Rejected. Most settings don't need to differ between chains, and a dozen variables per chain are hard to review. Only the three that do differ are exposed.
+- **Named networks** (`"network": "base-sepolia"`). Rejected. Names need a mapping to chain ids, while the chain id is already unique and every RPC can confirm it.
+- **A JSON or YAML config file.** Rejected. It's one more file to deploy, and it doesn't fit the spec's env-var setup.
 
 ## Consequences
 
-- Adding a chain means one small file and one env var.
-- Changing a chain setting means a code change and a redeploy.
-- Env var names are less readable (`RPC_URL_84532`). The chain's config file says which chain it is.
+- Adding a chain means one env var.
+- A per-chain value for any other setting, such as the in-flight cap, means a code change.
+- Only standard EVM transactions are signed: EIP-1559 or legacy. Chains that need their own transaction format, such as zkSync's EIP-712 transactions or Celo's fee currencies, aren't supported.
+- Env var names are less readable (`RPC_URL_84532`) than chain names.
 - If a chain's RPC is unreachable at startup, the service doesn't start, because the chain id check can't run. Revisit if that's a problem in practice.

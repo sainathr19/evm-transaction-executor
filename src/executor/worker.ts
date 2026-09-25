@@ -198,7 +198,7 @@ async function prepare(tx: QueuedTx, chain: RuntimeChain): Promise<Result<Prepar
   const { gas } = chain.config
   try {
     const gasLimit = await estimateGasLimit(chain.rpc.read, tx, gas.gasLimitBufferPercent)
-    const priced = priceFees(await readMarketFees(chain.rpc.read, gas.type), gas)
+    const priced = priceFees(await readMarketFees(chain.rpc.read), gas)
     if (!priced.ok) return err({ code: 'FEE_ABOVE_CAP', capWei: priced.error.capWei })
     return ok({ gasLimit, fees: priced.value })
   } catch (error) {
