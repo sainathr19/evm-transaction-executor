@@ -10,7 +10,7 @@ A client posts `{ chainId, sender, to, value, data }` and gets an id back immedi
 
 The client polls with the id to get the result.
 
-> **Status:** the design below is agreed, and implementation has started. So far: tooling, per-chain config, env parsing and startup checks, the signer registry, the SQLite store, the nonce pool, gas and fee pricing, the RPC clients and broadcast loop, logging and the test harness. The API, worker and monitor aren't built yet. Some details will be settled during implementation; see [Open items](#open-items).
+> **Status:** the design below is agreed, and implementation has started. So far: tooling, per-chain config, env parsing and startup checks, the signer registry, the SQLite store, the nonce pool, gas and fee pricing, the RPC clients and broadcast loop, the worker, logging and the test harness. The API and monitor aren't built yet. Some details will be settled during implementation; see [Open items](#open-items).
 
 ## Development
 
@@ -77,7 +77,7 @@ flowchart LR
 2. **Estimate and price.** Once the sender has a free slot ([ADR 0012][0012]), the worker estimates gas (plus a buffer) and prices the fee. If the estimate reverts, or the fee is above the chain's cap, the request fails here, before anything is signed.
 3. **Take a nonce** from the sender's pool. This happens as late as possible, so earlier failures never touch the pool.
 4. **Sign and save.** The signed transaction is saved as an *attempt* **before** it's broadcast.
-5. **Broadcast.** If a node accepts it, or any send goes unanswered, the request becomes `submitted` and keeps its nonce. If every send is clearly rejected, no node has it, and the nonce is released ([ADR 0009][0009]).
+5. **Broadcast.** If a node accepts it, or any send goes unanswered, the request becomes `submitted` and keeps its nonce. If every send is clearly rejected, no node has it: the nonce is released and the request fails ([ADR 0009][0009]).
 6. **Watch.** On every poll the monitor checks receipts for all of the request's attempts, and replaces a stuck transaction with a higher-fee one at the same nonce. When a receipt appears, the request becomes `succeeded` or `reverted`.
 
 ### Statuses
@@ -178,7 +178,7 @@ Shows RPC status for each chain. For each sender it shows transactions in flight
 |---|---|
 | `ESTIMATION_REVERTED` | Gas estimation reverted. Includes the decoded revert reason. Nothing was broadcast. |
 | `FEE_ABOVE_CAP` | The current base fee plus tip is above the chain's `maxFeePerGasWei`. |
-| `RPC_UNAVAILABLE` | The RPC stayed unreachable for the whole pre-broadcast retry window. |
+| `RPC_UNAVAILABLE` | The RPC couldn't be reached for gas estimation or fee lookup, even after viem's retries. |
 | `INSUFFICIENT_FUNDS` | The node rejected the transaction because the balance can't cover value plus the maximum gas cost. |
 | `BROADCAST_REJECTED` | Any other rejection. Includes the node's message. |
 | `NONCE_TAKEN` | A transaction from outside the service used this request's nonce. |
@@ -244,16 +244,17 @@ The service refuses to start if:
 | Transaction would revert | Caught by gas estimation: `failed` with `ESTIMATION_REVERTED`, no gas spent | [0007] |
 | Fee spike above the chain's cap | `failed` with `FEE_ABOVE_CAP`. Replacement fees are capped too. | [0007] |
 | RPC timeouts, rate limits, 5xx on reads | viem retries with backoff, then moves to the next RPC URL | [0008] |
-| RPC down before broadcast | Retried for up to 2 minutes, then `RPC_UNAVAILABLE`. Nothing was signed. | [0008] |
+| RPC down before broadcast | viem retries each read; if it's still down, `failed` with `RPC_UNAVAILABLE`. Nothing was signed. | [0008] |
 | Broadcast unanswered: did the node get it? | Nonce kept and request `submitted`. The monitor finds the receipt or resends the same signed transaction. | [0008], [0009] |
 | Resending a transaction the node already has | `already known` counts as success | [0008] |
-| Broadcast clearly rejected | Nonce goes back to the pool and is reused by the next request | [0009] |
+| Broadcast clearly rejected | The request fails. Its nonce goes back to the pool, which resyncs from the chain, and is reused by the next request. | [0009] |
 | Transaction stuck in the mempool | Replaced at the same nonce with higher fees, up to `maxBumps` and within the cap | [0008] |
 | Transaction dropped from a mempool | Resent or fee-bumped at the same nonce. The nonce never goes back to the pool. | [0008], [0009] |
 | Original mined after a replacement was sent | Receipts are checked for every attempt, so either outcome is recognised | [0008] |
 | Rolled-back nonce with no request to fill it | The gap filler sends 0 ETH from the sender to itself at that nonce. It doesn't count toward the per-sender cap. | [0009], [0012] |
-| Parallel broadcasts arrive out of order (`nonce too high`) | Nonce rolled back and the request retried shortly after | [0009] |
-| Nonce used outside the service | `failed` with `NONCE_TAKEN`; the pool is resynced from the chain | [0001], [0009] |
+| Parallel broadcasts arrive out of order (`nonce too high`) | The request fails and its nonce goes back to the pool; the client resubmits | [0009] |
+| Nonce used outside the service, before our broadcast | The request fails with `nonce too low`. The pool resyncs from the chain, so the next request gets a fresh nonce. | [0009] |
+| Nonce used outside the service, after our broadcast | `failed` with `NONCE_TAKEN`; the pool is resynced from the chain | [0001], [0009] |
 | Crash between signing and broadcasting | The signed transaction was saved first, so after restart the monitor resends it | [0003] |
 | Restart with transactions in flight | Nonce pools are rebuilt from SQLite and the chain | [0009] |
 | RPC URL pointing at the wrong chain | The service refuses to start | [0005] |
@@ -267,6 +268,8 @@ The service refuses to start if:
 - Two dependent transactions sent back to back (approve, then swap) can fail estimation, because the first isn't mined yet ([0007]).
 - A sender's queue of waiting requests has no limit ([0012]).
 - Node error messages differ between node implementations, so classifying broadcast errors is best effort. Unrecognised errors become `BROADCAST_REJECTED` ([0008]).
+- A rejected broadcast fails the request rather than retrying it. The client resubmits with a new key ([0009]).
+- Each RPC URL is assumed to behave like a single node. A load balancer that accepts a tx on one backend and returns another backend's error can leave a request marked `failed` although it ran ([0009]).
 - Every configured RPC must be reachable at startup ([0005]).
 - No contract deployment, no client-supplied gas or fees, and no batching ([0011]).
 - On OP-stack L2s the L1 data fee isn't modelled, so senders need slightly more balance than gas × fee ([0007]).

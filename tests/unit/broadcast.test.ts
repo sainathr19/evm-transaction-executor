@@ -1,6 +1,6 @@
 import { HttpRequestError, InvalidInputRpcError, RpcRequestError, TimeoutError, type Hash, type Hex } from 'viem'
 import { describe, expect, test } from 'vitest'
-import { broadcast, classifyNodeMessage, describeSendError } from '../../src/broadcast'
+import { broadcast, classifyNodeMessage, describeSendError, isTransportError } from '../../src/broadcast'
 import type { Sender } from '../../src/rpc'
 
 const RAW = '0x02f86b' as Hex
@@ -25,6 +25,18 @@ describe('describeSendError', () => {
     ['a non-viem error', new Error('socket hang up')],
   ])('%s is not an answer', (_case, error) => {
     expect(describeSendError(error)).toEqual({ answered: false })
+  })
+})
+
+describe('isTransportError', () => {
+  test.each([
+    ['a timeout', timeout(), true],
+    ['an HTTP 502', new HttpRequestError({ url: 'http://node', status: 502, body: {} }), true],
+    ['a refused connection', new HttpRequestError({ url: 'http://node', body: {}, details: 'fetch failed' }), true],
+    ['a node answer', nodeError('execution reverted'), false],
+    ['a non-viem error', new Error('chain has no base fee'), false],
+  ])('%s → %s', (_case, error, expected) => {
+    expect(isTransportError(error)).toBe(expected)
   })
 })
 
